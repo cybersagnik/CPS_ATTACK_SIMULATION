@@ -1,0 +1,153 @@
+# Feeder registry
+#
+# Single source of truth for every model under `models/feeders/`.  Consumed by
+# `simulator/power/feeder_registry.py` and `scripts/ingest_feeder.py`.
+#
+# `status` per-model:
+#   native_dss  -- ships a runnable OpenDSS master script under `dss_master`.
+#   csv_model   -- structured CSV representation (importable into OpenDSS).
+#   spec_data   -- specification data only (XLS / Word / TCW / TXT); an
+#                  OpenDSS model must be authored before the pipeline can run it.
+#
+# For `native_dss` models, `topology_file` is the snapshot produced by
+# `scripts/ingest_feeder.py` (schema of `dump_topology`).  The active pipeline
+# feeder is selected by `simulation.feeder` in `config/simulation.yaml`.
+
+defaults:
+  base_url: "https://cmte.ieee.org/pes-testfeeders/resources/"
+
+feeders:
+  yyd:
+    name: YYD 4-node test feeder (three-winding transform)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/YYD_4node_testfeeder.zip"
+    dir: models/feeders/yyd
+    status: native_dss
+    dss_master: models/feeders/yyd/YYD-Master.DSS
+    topology_file: models/mappings/yyd_topology.json
+    facts:
+      buses: 6
+      loads: 4
+      nominal_kv: 2.4
+    notes: "Active pipeline feeder; original model unmodified (wrapper sanitises Show/Export)."
+
+  ieee4_source:
+    name: Standard 4-bus test cases (YVD/YBD/…)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/feeder4.zip"
+    dir: models/feeders/ieee4_source
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    notes: "1991 cases; Word spec only. Conversion required before use."
+
+  ieee4_4wire:
+    name: 4-wire delta / wye-delta center-tapped cases
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/feeder44wire.zip"
+    dir: models/feeders/ieee4_4wire
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    notes: "1991 cases; Word spec only. Neutral resistance correction (2012) documented."
+
+  ieee13_source:
+    name: IEEE 13-bus feeder (4.16 kV, regulator, unbalanced)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/feeder13.zip"
+    dir: models/feeders/ieee13_source
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    facts:
+      buses: 13
+      nominal_kv: 4.16
+    notes: "1992 case; XLS/TCW/Word spec. Conversion required before use."
+
+  ieee34:
+    name: IEEE 34-bus feeder (24.9 kV, long/light, regulators)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/feeder34.zip"
+    dir: models/feeders/ieee34
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    facts:
+      buses: 34
+      nominal_kv: 24.9
+    notes: "1992 case; XLS/TCW/Word spec. Branch 858-864 correction (2010) documented."
+
+  ieee37:
+    name: IEEE 37-bus feeder (4.8 kV, underground delta, very unbalanced)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/feeder37.zip"
+    dir: models/feeders/ieee37
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    facts:
+      buses: 37
+      nominal_kv: 4.8
+    notes: "1992 case; XLS/TCW/Word spec. Conversion required before use."
+
+  ieee123:
+    name: IEEE 123-bus feeder (4.16 kV, regulators + capacitor banks)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/feeder123.zip"
+    dir: models/feeders/ieee123
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    facts:
+      buses: 123
+      nominal_kv: 4.16
+    notes: "1992 case; XLS/TCW/Word spec. Corrections (2010/2014) documented. Stable/convergent."
+
+  ieee8500:
+    name: IEEE 8500-node feeder (MV+LV, ~4800 buses)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/8500node.zip"
+    dir: models/feeders/ieee8500
+    status: csv_model
+    dss_master: null
+    topology_file: null
+    notes: "CSV model inside nested zip (IEEE-8500Node-CSV-R2b.zip); Solutions.zip for reference."
+
+  nev:
+    name: Neutral-Earth-Voltage feeder
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/nev_test_feeder.zip"
+    dir: models/feeders/nev
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    notes: "2010 case; XLS/PDF spec incl. shared-neutral 4-circuit segment."
+
+  short_circuit:
+    name: Short-circuit test cases (13/34/37/123-bus SC studies)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/Short-Circuit-Test-Case.zip"
+    dir: models/feeders/short_circuit
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    notes: "2011 case; TXT SC data for the four radial feeders; not a power-flow model."
+
+  lvnts:
+    name: 342-node low-voltage network test system
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/LVNTS.zip"
+    dir: models/feeders/lvnts
+    status: csv_model
+    dss_master: null
+    topology_file: null
+    facts:
+      buses: 342
+    notes: "2014 case; CSV lines/loads/transformers; urban LVN (spot+grid networks)."
+
+  european_lv:
+    name: European low-voltage test feeder
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/European_LV_Test_Feeder_v2.zip"
+    dir: models/feeders/european_lv
+    status: csv_model
+    dss_master: null
+    topology_file: null
+    notes: "2015 case; CSV model + 100 load profiles + OpenDSS/GridLAB-D solution XLSX. Quasi-static time-series."
+
+  comprehensive:
+    name: Comprehensive test feeder (all component types)
+    source_url: "https://cmte.ieee.org/pes-testfeeders/wp-content/uploads/sites/167/2017/08/IEEE-Comp-Test-Feeder-Data-20140401.xls"
+    dir: models/feeders/comprehensive
+    status: spec_data
+    dss_master: null
+    topology_file: null
+    notes: "2014 update (data xls + results zip) + original Comprehensive.zip + report. WindMil/CYME validated."

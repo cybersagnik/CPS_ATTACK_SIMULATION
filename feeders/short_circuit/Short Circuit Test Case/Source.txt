@@ -1,0 +1,2 @@
+Zpositive = 1.5 + j11.6 ohms
+Zzero = 4.8 + j21.1 ohms

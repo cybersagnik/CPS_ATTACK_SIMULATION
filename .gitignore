@@ -1,0 +1,15 @@
+# environment
+venv/
+.venv/
+env/
+
+# tests (not tracked per project decision)
+tests/
+
+# python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
