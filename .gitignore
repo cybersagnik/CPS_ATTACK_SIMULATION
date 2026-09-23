@@ -6,6 +6,9 @@ env/
 # tests (not tracked per project decision)
 tests/
 
+# pdf documents (not tracked per project decision)
+*.pdf
+
 # python caches
 __pycache__/
 *.py[cod]
