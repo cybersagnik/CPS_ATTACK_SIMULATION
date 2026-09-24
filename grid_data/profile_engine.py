@@ -360,6 +360,17 @@ class ProfileEngine:
             samples=samples,
         )
 
+    def get_customer_metadata(self, customer_id: int) -> Optional[tuple]:
+        """Return (postcode, generator_capacity_kwp) for a customer, or None.
+
+        O(1) metadata access without materialising the profile block.
+        """
+        return self._meta.get(customer_id)
+
+    def customer_has_cl(self, customer_id: int) -> bool:
+        """True if the customer has any controlled-load (cl) samples. O(1)."""
+        return customer_id in self._customers_with_cl
+
     def iter_customer_profiles(self) -> Iterator[CustomerProfile]:
         """Yield a CustomerProfile per customer in file order.
 

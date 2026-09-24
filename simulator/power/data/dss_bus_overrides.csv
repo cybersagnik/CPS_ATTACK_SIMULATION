@@ -1,0 +1,2 @@
+feeder_id,source_id,bus1,bus2,note
+ieee123,XFM-1,61,610,Substation secondary bus 61 feeds load transformer primary (LV 4.16 kV); secondary 610 (0.48 kV). Placement from IEEE-123 reference data: the XLS workbook does not carry a link row for XFM-1, so the CGM left its buses empty; this row restores the documented terminal buses.
