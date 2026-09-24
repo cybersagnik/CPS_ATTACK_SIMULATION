@@ -145,7 +145,98 @@ will extend it (never in-place) with attack-specific fields such as `injected`,
 `result`, and non-normal `quality` / `delivery_status` / `latency_ms` values.
 Each new network-layer phase gets its own section under this file.
 
+## Phase F/G — Attack Engine & MITRE-ICS Scenarios (simulator/attack)
+
+The network layer stays the canonical observability layer.  The attack phase
+(`simulator/attack`) is a **pure consumer that composes new tooling over the
+Phase E event model** — it never rewrites `normal.py`, the physical telemetry
+or the event schema.  Phase E rules (no sockets, no real DNP3 — `protocol`
+stays a logical `DNP3` label) remain binding for every attack event.
+
+### 1. Event-model extension
+
+Attack events reuse the Phase E schema **plus** the extension fields planned in
+Phase E §11 (column order, appended unmodified):
+
+    event_id,scenario_id,timestamp,feeder_id,src_device,dst_device,protocol,
+    message_type,direction,sequence,point_id,value,unit,quality,delivery_status,
+    latency_ms,injected,replay_of_event_id,original_value,reported_value,
+    command_id,result
+
+New *logical* message types (still protocol-neutral):
+
+| message  | src → dst                   | direction       | payload                                                        |
+|----------|-----------------------------|-----------------|----------------------------------------------------------------|
+| QUERY    | SCADA_MASTER → RTU_<feeder> | SCADA_TO_RTU    | none (point_id/value empty) — reconnaissance interrogation     |
+| COMMAND  | SCADA_MASTER → RTU_<feeder> | SCADA_TO_RTU    | one control point, numeric `value`, `command_id` non-empty     |
+| REPORT   | RTU_<feeder> → SCADA_MASTER | RTU_TO_SCADA    | one point read-back / command ack, numeric `value`             |
+
+Non-normal `quality`/`delivery_status`/`latency_ms` are allowed only when a
+future attack scenario requires them; the three shipped scenarios keep
+GOOD/DELIVERED/0 because the transport itself is unharmed — it is intent or an
+injected value that is malicious.
+
+`injected` semantics (`simulator/attack/events.py` docstring is canonical):
+
+- `injected=1` — message did not originate from the Phase E normal dialog:
+  attacker-forged `COMMAND` / `QUERY` messages, and any `REPORT` carrying a
+  value the operator cannot trust (data forgery, e.g. a tampered parameter
+  reported as the operating value).
+- `injected=0` — genuine device echo of a *true* post-action state (e.g. the
+  RTU honestly acknowledging an applied unauthorized command).
+
+Attack event identity: `event_id = "<scenario_id>-atk<NNN>"` (`NNN` restarts
+at 001 per scenario run); scenario id follows the Phase E convention
+`<attack_id>_<feeder_id>` (e.g. `unauthorized_command_ieee37`).
+
+### 2. Package layout (simulator/attack)
+
+- `base.py` — `Attack` abstraction + `AttackContext` + `AttackActionResult`
+- `engine.py` — `AttackEngine.run(attack, context)` orchestrator (always
+  returns a structured `AttackResult`; never attacks silently)
+- `targets.py` — dynamic, feeder-agnostic discovery + deterministic selection
+- `results.py` — `AttackResult` / `ground_truth()` / `event_rows()`
+- `events.py` — `AttackEvent` (Phase E schema + extension) + validation
+- `physical.py` — optional OpenDSS physical-effect hook (baseline vs
+  overridden solve deltas)
+- `mitre.py` — verified MITRE ATT&CK for ICS catalog
+- `scenarios/` — the three shipped scenario implementations
+- `engine.SCENARIOS` + `scenarios.REGISTERED_SCENARIOS` — scenario registry
+
+### 3. Shipped scenarios (Task G) with MITRE mappings
+
+| scenario / attack_id        | MITRE technique                       | tactic                |
+|-----------------------------|---------------------------------------|-----------------------|
+| `reconnaissance`            | T0846 Remote System Discovery         | Discovery (TA0102)    |
+| `unauthorized_command`      | T0855 Unauthorized Command Message    | Impair Process Control (TA0106) |
+| `parameter_modification`    | T0836 Modify Parameter                | Impair Process Control (TA0106) |
+
+Technique names/tactics were verified against the official ATT&CK for ICS
+source (`https://attack.mitre.org`); see `mitre.py` for the rationale recorded
+per technique.  Target selection is dynamic and feeder-agnostic (no hardcoded
+feeder/bus/device ids in production code; the engine also runs unmodified on a
+hypothetical unknown feeder — see test `FutureFeederIndependenceTests`).  When
+no compatible target exists, the engine returns a structured FAILED `AttackResult`
+— it never invents a target.
+
+### 4. Dataset surface for Task H (exporter)
+
+- `result.as_dict()` — one flat ground-truth record per attack execution.
+- `result.event_rows()` — the attack network events as row dicts in the
+  `ATTACK_EVENT_COLUMNS` order (appendable to the normal events CSV).
+- `engine.SCENARIOS` — available attacks to export.
+
+### 5. Validation
+
+    python3 -m unittest simulator.network.test_network_events   # Phase E (must stay green)
+    python3 -m unittest simulator.attack.test_attack_engine -v  # attack engine + scenarios
+
+Real-data coverage: all three scenarios × {ieee37, ieee123} run to SUCCESS on
+the real models + real `normal_*_network_events.csv`, every generated event
+passes `validate_attack_event`, sequences are contiguous, physical effect
+deltas are non-degenerate, and Phase E tests remain green.
+
 ---
 
-**PHASE E COMPLETE. NEXT = ATTACK PHASE (injected/replayed network events over
-this normal baseline).**
+**PHASE E COMPLETE + PHASE F (ATTACK ENGINE) & PHASE G (MITRE SCENARIOS) DONE.
+NEXT = PHASE H (ATTACK DATASET EXPORT — consumes `AttackResult`).**

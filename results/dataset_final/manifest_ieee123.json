@@ -1,0 +1,41 @@
+{
+  "artifact_entries": [
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_parameter_modification_dataset.csv",
+      "sha256": "8868a263bb796da15c0518ae9c77f310df92776a9e91f51e50848fa9467d127d"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_reconnaissance_dataset.csv",
+      "sha256": "ea31cd5813eca158a24a8f4015e711c44d919c53197c133d2eafb66886c97a64"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_unauthorized_command_dataset.csv",
+      "sha256": "f799ffa0705e783381fa2c2da5313a01e0c2ad626d53dca270c604f18d80bb50"
+    },
+    {
+      "kind": "combined",
+      "path": "combined_ieee123_dataset.csv",
+      "sha256": "7da7d43d7a55cea91373124e51353438b1afe6871f6948e953af4058e81d8803"
+    },
+    {
+      "kind": "ground_truth",
+      "path": "ground_truth_ieee123.json",
+      "sha256": "753aa4851b82480fd3e83331611e8c475f04041c9a02ce7a438122117b735091"
+    }
+  ],
+  "attack_rows": 0,
+  "combined_rows": 0,
+  "determinism_digest": "7da7d43d7a55cea91373124e51353438b1afe6871f6948e953af4058e81d8803",
+  "failed_scenarios": {},
+  "feeder_id": "ieee123",
+  "generated_at_utc": "2026-09-24T23:45:34.865197+00:00",
+  "normal_rows": 0,
+  "schema_version": "1.0",
+  "seed": 42,
+  "source_normal_path": "",
+  "source_normal_sha256": "",
+  "successful_scenarios": 0
+}
