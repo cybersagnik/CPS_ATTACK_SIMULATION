@@ -24,13 +24,16 @@ pipeline. The overall project pipeline is:
 
 This repository currently implements **DATA PARSING (Phase A-2)**,
 **WIDE → TIMESTAMP TIME-SERIES CONVERSION (Phase A-3)**,
-**PHYSICAL PROFILE PROCESSING (Phase A-4)**, and the **ProfileEngine
-customer-level access layer (Phase B-6)**: turning the raw
-Ausgrid "Solar home" CSV into validated, structured records, then into
+**PHYSICAL PROFILE PROCESSING (Phase A-4)**, the **ProfileEngine
+customer-level access layer (Phase B-6)**, the **generic random assignment
+(Phase B-7)**, and the **profile_assignment.csv export (Phase B-8)**: turning
+the raw Ausgrid "Solar home" CSV into validated, structured records, then into
 timestamp-based long-format time series, then into merged per-customer
-load/solar physical profiles (with the kWh → kW conversion), and finally into
-an indexed per-customer access layer that later stages (random assignment,
-feeder integration, simulation, attack engine) can consume.
+load/solar physical profiles (with the kWh → kW conversion), then into
+an indexed per-customer access layer, then into
+customer-to-generic-slot random assignments, and finally into a persisted
+assignment file that later stages (feeder integration, simulation, attack
+engine) can consume.
 The modules deliberately have **no knowledge** of feeders, buses, SCADA,
 simulation, attacks, or MITRE — that keeps the stages decoupled and the data
 path reproducible.
@@ -108,7 +111,13 @@ path reproducible.
     customer-level profile access (indexed, 17,520 samples/customer)
         |
         v
-    [next Phase B-7] random assignment <-- NEXT STEP (not yet implemented)
+    profile_assignment.py             <-- Phase B-7 (implemented, this doc)
+        |
+        v
+    generic assignment slots (assignment_id -> customer_id, seed 42)
+        |
+        v
+    profile_assignment.csv           <-- Phase B-8 (implemented, this doc)
         |
         v
     [future Phase C] feeder integration <-- future (Sagnik's feeder model)
@@ -120,9 +129,11 @@ path reproducible.
     [future] attack engine            <-- future (teammate's MITRE stage)
 
 Phase A-2 (CSV parsing), Phase A-3 (wide → timestamp time series),
-Phase A-4 (physical profile processing) and Phase B-6 (ProfileEngine access
-layer) are implemented in this step. Everything below "customer-level profile
-access" is deliberately **not** implemented here.
+Phase A-4 (physical profile processing), Phase B-6 (ProfileEngine access
+layer), Phase B-7 (generic random assignment) and Phase B-8
+(profile_assignment.csv export) are implemented in this step. Everything below
+"random assignment" is deliberately **not** implemented here (Phase C feeder
+binding via the Common Grid Model is future work).
 
 ## 4. Parser Architecture
 
@@ -744,15 +755,16 @@ covers all 300 customers × 365 days = 109,500), and every group yields exactly
 - `Solar home 2010-2011.csv` and `ausgrid_timeseries_2010_2011.csv` are never
   overwritten.
 
-### 19. What Phase B-7 will do next
+### 19. What Phase B-7 does (implemented) and what Phase C will do next
 
-Phase B-7 (random assignment) will consume these profiles via the
-ProfileEngine (Phase B-6) and assign each customer's load/solar to a feeder
-target. Phase C (feeder integration) will then combine the assignments with
-the teammate's **Common Grid Model** (feeder topology, buses, load IDs,
-phases), including load-phase assignment, reactive-power rules (P/Q ratio or
-power-factor override), and solar injection only onto generator targets (zero
-targets on IEEE-37 / IEEE-123 → zero solar there).
+Phase B-7 (random assignment, see the dedicated section below) consumes these
+profiles via the ProfileEngine (Phase B-6) and assigns each customer uniformly
+at random to a generic slot (`assignment_id -> customer_id`). Phase C (feeder
+integration) will then combine the assignments with the teammate's **Common
+Grid Model** (feeder topology, buses, load IDs, phases), including
+load-phase assignment, reactive-power rules (P/Q ratio or power-factor
+override), and solar injection only onto generator targets (zero targets on
+IEEE-37 / IEEE-123 → zero solar there).
 **Phase A-4 stores no feeder/bus knowledge.**
 
 ### 20. Summary
@@ -955,8 +967,272 @@ access, row parsing and grouping behind `CustomerProfile`.
 ProfileEngine adds **no** feeder/bus/load/generator ids, no phase allocation,
 no `Load.kw_per_phase`, no reactive-power/power-factor/IEEE-37/IEEE-123 logic,
 no Common Grid Model integration, no SCADA/telemetry/attack/MITRE logic, no
-network simulation, and does **not** write `profile_assignment.csv`.
+network simulation, and does **not** write `profile_assignment.csv`
+(serialisation is Phase B-8's `profile_assignment.py` role, not the engine's).
 A-2/A-3/A-4 modules and files (`ausgrid_parser.py`, `ausgrid_timeseries.py`,
 `ausgrid_profiles.py`, the two CSV outputs) are unchanged.
 
-**Project status: Phase B-6 COMPLETE. NEXT = Phase B-7 (random assignment).**
+**Project status: Phase B-8 COMPLETE. NEXT = Phase C (feeder binding).**
+
+## Phase B-7 — Random Assignment
+
+### 1. Purpose
+
+Phase B-7 assigns whole Ausgrid customers to a set of **generic assignment
+slots** via uniform random sampling **without replacement**, producing a list
+of `ProfileAssignment` records that later phases (B-8, then Phase C feeder
+binding) consume. One assignment unit is
+
+    assignment_id -> customer_id
+
+e.g. "assignment 1 -> customer 58". B-7 does **not** decide that a slot maps
+to a specific feeder node — that is Phase C's responsibility (Sagnik's feeder
+model).
+
+### 2. Input
+
+- `profile_engine.py` (Phase B-6) — the sole dependency. B-7 uses only
+  `ProfileEngine`'s public API and **never** re-parses the raw Ausgrid source
+  or the A-4 CSV.
+
+### 3. Output / API
+
+```
+assigner     = RandomProfileAssigner(ProfileEngine("ausgrid_profiles_2010_2011.csv"))
+assignments  = assigner.assign(assignment_count=25, seed=42)  # list[ProfileAssignment]
+report       = assigner.validate_assignments(assignments, requested_count=25)
+summary      = assigner.summary(assignments)                  # dict, no file writing
+```
+
+- `ProfileAssignment` (frozen dataclass), one per slot:
+  `assignment_id, customer_id, generator_capacity_kwp, seed, cl_present`
+  (plus `to_dict()`, used by the Phase B-8 CSV export).
+- CLI: `python3 profile_assignment.py ausgrid_profiles_2010_2011.csv
+  --count 25 --seed 42` (`--validate`, `--detail N`, and Phase B-8's
+  `--output PATH` optional).
+- B-7 itself does **not** write `profile_assignment.csv` unless the Phase B-8
+  `--output` flag is supplied.
+
+### 4. Randomization semantics
+
+- Uniform random sampling **without replacement** over the full eligible pool
+  (all 300 customers); every customer has equal probability.
+- Deterministic dedicated generator `random.Random(seed)`, default `seed = 42`.
+  Never uncontrolled global randomness.
+- Same pool + same `assignment_count` + same seed ⇒ identical ordered
+  assignment. Different seed normally differs. (`generic seed = 42` noted in
+  B-6 section 11 stays valid.) Verified on real data: seed 42 twice produced
+  byte-identical summaries; seed 99 differed.
+- `assignment_count` range-checked: `0 <= count <= number of eligible
+  customers`, else a clear `ProfileAssignmentError`.
+
+### 5. Load + solar coupling
+
+A customer is a complete household profile. When customer X is assigned, both
+its load (GC+CL, possibly CL = 0) and solar (GG) belong to that same
+assignment. B-7 never samples load from one customer and solar from another —
+the record holds a single `customer_id`, and load/solar are always fetched
+together from that customer.
+
+### 6. CL handling
+
+All customers are equally eligible. Customers without CL simply have
+`cl_kwh = 0.0` across the year (`load = GC + 0`); there is **no** CL eligibility
+rule (nothing limits CL-only customers, and no CL exclusion exists).
+
+### 7. cl_present semantics
+
+`cl_present = True` iff the selected customer's profiles contain at least one
+**non-zero** `cl_kwh`, per `ProfileEngine.customer_has_cl()` (the documented
+B-6 value-presence measure ⇒ 136 CL customers). It is metadata recorded on
+each assignment for Phase C; it is **not** derived per assignment from slot
+type (B-7 slots are generic).
+
+### 8. Solar capacity
+
+`generator_capacity_kwp` is **metadata only**: carried through unchanged, never
+used for eligibility, never clamped/normalised.
+
+### 9. Feeder-agnostic scope
+
+B-7 has **no** knowledge of IEEE-37/IEEE-123, feeder/load/generator/bus ids,
+phases, `kw_per_phase`, Common Grid Model, `get_load_targets()` /
+`get_generator_targets()`, SCADA, simulation, attack logic, or MITRE. Records
+contain only `assignment_id, customer_id, generator_capacity_kwp, seed,
+cl_present`.
+
+### 10. Validation (10 generic checks)
+
+1. count matches requested count; 2. assignment ids unique; 3. assignment ids
+sequential 1..N; 4. customer ids unique (no-replacement); 5. every customer
+exists in ProfileEngine; 6. capacity matches engine metadata; 7. seed recorded
+consistently on every record; 8. `cl_present` matches `customer_has_cl()`;
+9. same seed ⇒ same ordered assignment (tested in unit tests, verified on real
+data); 10. different seed ⇒ different assignment (tested, verified). Plus an
+"all selected customers within eligible pool" guard.
+
+### 11. Additive ProfileEngine accessors (Phase B-7)
+
+Two additive, non-semantic accessors were added to `profile_engine.py` so B-7
+reuses B-6's own init-time index instead of re-parsing customer blocks:
+
+    meta = engine.get_customer_metadata(cid)   # (postcode, kWp) | None, O(1)
+    has_cl = engine.customer_has_cl(cid)        # bool, O(1)
+
+No existing ProfileEngine behavior or results changed (all 12 B-6 tests still
+pass).
+
+### 12. Unit tests
+
+`test_profile_assignment.py` (17 tests) covers A–N from the plan on a small
+synthetic 3-customer fixture: count=0 / 1 / N, count>N fails, negative count
+fails, unique customers, sequential ids, seed reproducibility (same seed
+identical, different seed differs), capacity preserved, `cl_present` correct,
+CL-absent customers eligible, load/solar coupling (single customer id; no
+separate load/solar customer fields), no feeder dependency, and no
+feeder/bus/load/generator fields in records.
+
+### 13. Real-data verification
+
+```
+Eligible customers        : 300   (also for count = 85)
+```
+
+- `--count 25 --seed 42`: 25 assignments, 25 unique customers, `cl_present`
+  count 8, capacity range `1.0..3.78 kWp`.
+
+            assignment  1 -> customer  58 (kWp=1.0,  cl_present=False)
+            assignment  2 -> customer  13 (kWp=2.22, cl_present=False)
+            assignment  3 -> customer 141 (kWp=3.0,  cl_present=False)
+            assignment  4 -> customer 126 (kWp=1.1,  cl_present=True)
+            assignment  5 -> customer 115 (kWp=1.8,  cl_present=False)
+
+- `--count 85 --seed 42`: 85 assignments, 85 unique customers, `cl_present`
+  count 35, capacity range `1.0..6.2 kWp`.
+- `validate_assignments` all checks OK for both runs.
+- Reproducibility: seed 42 run twice ⇒ identical output; seed 99 differs.
+
+### 14. Scope confirmation / files
+
+`profile_assignment.py` (new, Phase B-7) and `test_profile_assignment.py`
+(new). `profile_engine.py` gained only the two additive accessors listed
+above. A-2/A-3/A-4 files and outputs (`ausgrid_parser.py`,
+`ausgrid_timeseries.py`, `ausgrid_profiles.py`, the CSV outputs) are unchanged.
+No `profile_assignment.csv` is written in this phase.
+
+**Phase B-7 COMPLETE. Phase B-8 COMPLETE. NEXT = Phase C (feeder binding).**
+
+## Phase B-8 — profile_assignment.csv
+
+### 1. Purpose
+
+Phase B-8 is the **export/persistence layer** for Phase B-7. It writes the
+validated `list[ProfileAssignment]` to `profile_assignment.csv` so that Normal
+and Attack simulation later reuse the **same** assignment file with **no
+re-randomization** between them. It is a pure exporter: it never re-runs the
+assignment algorithm and never touches customer profiles.
+
+The relationship:
+
+    ProfileEngine
+         ↓
+    RandomProfileAssigner        (B-7: uniform, no-replacement, seed)
+         ↓
+    list[ProfileAssignment]
+         ↓
+    ProfileAssignmentExporter     (B-8: THIS phase)
+         ↓
+    profile_assignment.csv
+
+### 2. Exact CSV schema (locked, column order fixed)
+
+    assignment_id,customer_id,generator_capacity_kwp,seed,cl_present
+
+- `assignment_id`, `customer_id`, `seed` — integers.
+- `generator_capacity_kwp` — float (metadata, never modified).
+- `cl_present` — boolean, written as `True` / `False` (never `1`/`0`).
+
+Example rows (real data, count=25, seed=42 — matches the B-7 spec example exactly):
+
+    assignment_id,customer_id,generator_capacity_kwp,seed,cl_present
+    1,58,1.0,42,False
+    2,13,2.22,42,False
+    3,141,3.0,42,False
+    4,126,1.1,42,True
+    5,115,1.8,42,False
+
+### 3. What the CSV does NOT contain
+
+No full customer profiles (17,520 samples live only behind
+`ProfileEngine.get_customer_profile(customer_id)`), no
+`feeder_id/load_id/generator_id/bus_id/phase/kw_per_phase/timestamp`/load or
+solar columns. B-8 is **assignment metadata only**; feeder binding is Phase C.
+
+### 4. Export API
+
+    exporter = ProfileAssignmentExporter()
+    exporter.export(assignments, "profile_assignment.csv",
+                    assigner=assigner, requested_count=25)   # atomic write
+    report = exporter.validate_file("profile_assignment.csv", expected_count=25)
+
+- `export()` validates **before** writing (structure + B-7 semantic
+  validation via `RandomProfileAssigner.validate_assignments()`) and fails
+  loudly rather than writing corrupt output. It never leaves a partial file:
+  it writes to a temp sibling then `os.replace()` atomically, cleaning up on
+  failure.
+- `validate_file()` reads the CSV back and verifies the exact header, row
+  count, sequential/unique assignment ids, unique customer ids, valid
+  capacities, consistent seed, and boolean `cl_present` (no missing fields /
+  unexpected columns).
+- `read_file()` returns `(columns, parsed row dicts)` for verification.
+
+### 5. Determinism / reproducibility
+
+- B-7 already returns identical assignments for identical
+  `(engine input, count, seed)`; B-8 adds nothing nondeterministic (no
+  timestamps, UUIDs, or generated metadata; the seed is already in every row).
+- Verified: exporting count=25/seed=42 twice produced **byte-identical** CSV;
+  seed=99 produced different assignment content.
+- Rows are written in ascending `assignment_id` order — exactly the B-7
+  selection order.
+
+### 6. CLI usage
+
+    python3 profile_assignment.py ausgrid_profiles_2010_2011.csv --count 25 --seed 42
+    python3 profile_assignment.py ausgrid_profiles_2010_2011.csv --count 25 --seed 42 --output profile_assignment_25_seed42.csv
+
+The `--output` flag triggers export. Without it, the existing B-7 CLI behavior
+is preserved and **no file is written** (an existing assignment file is never
+overwritten unexpectedly). The CLI refuses to overwrite the input profile CSV.
+Error paths now exit non-zero (`sys.exit(main())`).
+
+### 7. Unit tests
+
+`test_profile_assignment_export.py` (22 tests) on a synthetic fixture covers:
+correct header/column order (A/B), row count (C), assignment/customer IDs (D/E),
+capacity (F), seed (G), cl_present (H), deterministic/reproducible output (I),
+invalid data rejected incl. atomic no-partial-file (J), CSV read-back match (K),
+no unexpected columns incl. tampered header (L), no duplicate assignments (M),
+and an engine-backed end-to-end export.
+
+### 8. Real-data validation
+
+- `profile_assignment_25_seed42.csv` — 25 rows + header; ids `1..25`; 25
+  unique customers; capacity range `1.0..3.78 kWp`; `cl_present` count 8;
+  all `validate_file()` checks OK.
+- `profile_assignment_85_seed42.csv` — 85 rows + header; ids `1..85`; 85
+  unique customers; capacity range `1.0..6.2 kWp`; `cl_present` count 35;
+  all `validate_file()` checks OK.
+- Reproducibility: seed 42 export twice ⇒ byte-identical file; seed 99 ⇒
+  different content.
+- The 5-row sample above is the actual first five rows of the exported file.
+
+### 9. Scope confirmation / files
+
+`profile_assignment.py` gained `ProfileAssignmentExporter`, `ASSIGNMENT_COLUMNS`
+and the `--output` CLI path (no semantics of B-7 changed; 17 B-7 tests still
+pass). `test_profile_assignment_export.py` is new. A-2/A-3/A-4 files and the
+source/profile CSVs are unchanged. No Phase C (feeder/bus/generator binding) is
+introduced here.
+
+**PHASE B COMPLETE. NEXT = PHASE C (feeder binding via the Common Grid Model).**
