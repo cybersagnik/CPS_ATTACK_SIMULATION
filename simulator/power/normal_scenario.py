@@ -23,6 +23,9 @@ Telemetry contract (manifest ``schema``):
   - every row is an interval-start timestamp, naive local (AEST/AEDT);
   - ``vpu_AB/BC/CA`` are line-to-line per-unit magnitudes on the bus's own
     nominal voltage base (delta buses included);
+  - ``i_amps`` is the RMS magnitude (A) of the phase current flowing *into*
+    each line/switch at its ``bus1`` (send-end) terminal, and of the
+    ``Vsource`` at ``SYSsource`` (substation feeder head);
   - summary rows carry source active/reactive power and the OpenDSS
     convergence flag.
 """
@@ -39,6 +42,7 @@ from typing import Dict, List, Optional
 
 
 _PHASE_PAIRS = {("1", "2"): "AB", ("2", "3"): "BC", ("3", "1"): "CA"}
+_PHASE_FROM_NODE = {1: "A", 2: "B", 3: "C"}
 
 
 def _ensure_grid_data() -> str:
@@ -168,6 +172,55 @@ def _floating_stubs(model) -> set:
     return stubs
 
 
+class _CurrentMeter:
+    """Cached descriptors of the telemetry current elements (every line/switch
+    plus the source), so per-timestamp reads only re-query ``Currents()``.
+
+    Measurement location: each branch is metered at its ``bus1`` (send-end)
+    terminal -- ``i_amps`` is the RMS magnitude of the current flowing *into*
+    the element there, per physical phase node.  The source element is metered
+    at ``SYSsource`` (substation feeder head).
+    """
+
+    def __init__(self, dss) -> None:
+        self._elements: List[Tuple[str, str, str, Tuple[str, float]]] = []
+        for name in dss.Circuit.AllElementNames():
+            lower = name.lower()
+            if not (lower.startswith("line.") or lower.startswith("vsource.")):
+                continue
+            dss.Circuit.SetActiveElement(name)
+            node_order = list(dss.CktElement.NodeOrder())
+            n_phases = dss.CktElement.NumPhases()
+            bus_names = list(dss.CktElement.BusNames())
+            if len(node_order) < n_phases or not bus_names:
+                continue
+            send_nodes = node_order[:n_phases]
+            phases = tuple(
+                (ph, pos) for pos, node in enumerate(send_nodes)
+                if (ph := _PHASE_FROM_NODE.get(int(node))) is not None
+            )
+            if not phases:
+                continue
+            if lower.startswith("vsource."):
+                kind = "source"
+            elif lower.startswith("line.sw_"):
+                kind = "switch"
+            else:
+                kind = "line"
+            self._elements.append((name, kind, bus_names[0], phases))
+
+    def read(self, dss, timestamp: str, feeder_id: str,
+             writer) -> None:
+        for name, kind, bus, phases in self._elements:
+            dss.Circuit.SetActiveElement(name)
+            currents = dss.CktElement.Currents()
+            for ph, pos in phases:
+                i_amp = abs(complex(currents[2 * pos],
+                                    currents[2 * pos + 1]))
+                writer.writerow([timestamp, feeder_id, name, kind, bus,
+                                 ph, f"{i_amp:.3f}"])
+
+
 def run(feeder_id: str, assignment_csv: str, profiles_csv: str,
         start: dt.datetime, days: int, out_dir: str,
         verbose: bool = False) -> Dict[str, object]:
@@ -207,12 +260,18 @@ def run(feeder_id: str, assignment_csv: str, profiles_csv: str,
     os.makedirs(out_dir, exist_ok=True)
     bus_csv = os.path.join(out_dir, f"normal_{feeder_id}_bus_telemetry.csv")
     sum_csv = os.path.join(out_dir, f"normal_{feeder_id}_summary.csv")
-    with open(bus_csv, "w", newline="") as bf, open(sum_csv, "w", newline="") as sf:
+    cur_csv = os.path.join(out_dir, f"normal_{feeder_id}_current_telemetry.csv")
+    with open(bus_csv, "w", newline="") as bf, open(sum_csv, "w", newline="") as sf, \
+            open(cur_csv, "w", newline="") as cf:
         bw = csv.writer(bf)
         bw.writerow(["timestamp", "feeder_id", "bus", "vpu_AB", "vpu_BC", "vpu_CA"])
         sw = csv.writer(sf)
         sw.writerow(["timestamp", "feeder_id", "source_p_kw", "source_q_kvar",
                      "converged", "n_buses", "n_deenergized", "vpu_min", "vpu_max"])
+        cw = csv.writer(cf)
+        cw.writerow(["timestamp", "feeder_id", "element", "element_type",
+                     "bus", "phase", "i_amps"])
+        meter = _CurrentMeter(dss)
         for i, ts in enumerate(window):
             shape = {c: store.shape_at(c, ts) for c in customers}
             kw_updates: Dict[str, Dict[str, float]] = {}
@@ -233,6 +292,7 @@ def run(feeder_id: str, assignment_csv: str, profiles_csv: str,
             tp = dss.Circuit.TotalPower()
             src_p = -float(tp[0])
             src_q = -float(tp[1])
+            meter.read(dss, ts, feeder_id, cw)
             tele = {}
             for name in dss.Circuit.AllBusNames():
                 if name in skip:
@@ -305,14 +365,20 @@ def run(feeder_id: str, assignment_csv: str, profiles_csv: str,
         "telemetry": {
             "bus_csv": bus_csv,
             "summary_csv": sum_csv,
+            "current_csv": cur_csv,
             "schema": {
                 "timestamp": "interval-start, naive local AEST/AEDT",
                 "vpu_AB/BC/CA": "line-to-line per-unit magnitude on bus base",
                 "source_p_kw": "active power into the feeder at Vsource",
                 "source_q_kvar": "reactive power into the feeder at Vsource",
+                "i_amps": "RMS current magnitude (A) at the send-end terminal",
             },
+            "current_location": "phase current flowing into each line/switch "
+                               "element at its bus1 terminal; Vsource.Source "
+                               "phase currents at SYSsource (substation "
+                               "feeder head)",
         },
-        "builder_issues": builder.issues,
+        "builder_issues": list(dict.fromkeys(builder.issues)),
     }
     with open(os.path.join(out_dir, f"normal_{feeder_id}_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)

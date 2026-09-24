@@ -17,6 +17,5 @@ __pycache__/
 build/
 dist/
 
-# regenerable Phase D artifacts (large; regenerate via the documented CLI)
+# regenerable large Phase D artifact (regenerate via the documented CLI)
 grid_data/ausgrid_profiles_2010_2011.csv
-results/

@@ -27,8 +27,8 @@ Generated artifacts (regenerable, not tracked):
 
 - `grid_data/ausgrid_profiles_2010_2011.csv` (375 MB, documented ~44 s parse)
 - `grid_data/profile_assignment_25_seed42.csv`, `grid_data/profile_assignment_85_seed42.csv` (B-8 schema, `seed=42`)
-- `results/ieee37/{normal_ieee37_{bus_telemetry,summary,manifest}}` — 7-day run
-- `results/ieee123/{normal_ieee123_{bus_telemetry,summary,manifest}}` — 7-day run
+- `results/ieee37/{normal_ieee37_{bus_telemetry,current_telemetry,summary,manifest}}` — 7-day run
+- `results/ieee123/{normal_ieee123_{bus_telemetry,current_telemetry,summary,manifest}}` — 7-day run
 
 ## 2. How to reproduce
 
@@ -97,22 +97,71 @@ Sources: `github.com/tshort/OpenDSS/Distrib/IEEETestCases/{37Bus,123Bus}`
   (`_terminal_order` resolves high/low from declared kVs and line-endpoint
   membership — CGM's terminals are unordered; XFM-1 is 709/61 = high).
 
-## 5. Convergence / NaN proof (7-day runs shown; same holds 1-day e2e)
+## 5. Convergence / NaN proof (7-day runs; validation re-run)
 
-| feeder | steps | all `Converged()` | NaN/blank voltages | n_buses/yr telemetry rows | source P kW (window) | energised vpu range (window) |
-|--------|-------|-------------------|--------------------|---------------------------|----------------------|------------------------------|
-| ieee37 | 336 | True | 0 | 36 | 922 .. 6216 | 0.636 .. 0.987 |
-| ieee123 | 336 | True | 0 | 125 | 1529 .. 6903 | 0.740 .. 1.011 |
+| feeder | steps | all `Converged()` | NaN in telemetry | n_buses/step | current rows (7 d) | source P kW | source Q kvar | energised vpu range |
+|--------|-------|-------------------|------------------|--------------|--------------------|-------------|---------------|---------------------|
+| ieee37 | 336 | True | 0 | 36 | 36 288 | 922 .. 6216 | 478 .. 5178 | 0.636 .. 0.987 |
+| ieee123 | 336 | True | 0 | 124 | 87 024 | 1529 .. 6903 | 122 .. 5181 | 0.740 .. 1.011 |
 
-Notes: per-unit values are line-to-line magnitudes on the bus's own nominal kV
-base. One ieee123 island bus (behind open switch 15x-3xx) is de-energized in
-every step, reported via `n_deenergized` column — physically correct.
-The unloaded 0.48 kV stub buses (`610`, `775`) are excluded from telemetry as
-floating (documented in each manifest). The P ranges swing ~±2.5x around rated
-because one Ausgrid customer is bound per load element; extreme simultaneous
-customer peaks drive the voltage into the 0.6-0.75 pu band at rare steps while
-typical steps stay 0.83-0.98 pu — conservative but physically consistent with
-this heavily-loaded IEEE test feeder design.
+Per-unit values are line-to-line magnitudes on the bus's own nominal kV base;
+single-phase buses (one node) have no L-L pair and legitimately report blank
+cells in `bus_telemetry`, never NaN. The **re-run reports `n_deenergized = 0`
+at every step and every timestamp executed**; an earlier draft reported "1
+de-energized bus" for ieee123, which was **bus 610** — see §7a.
+
+### 5a. Low-voltage findings (no clipping, no artificial fixes)
+
+The deep sags are a *legitimate consequence of the documented shape-scaling on
+real, unmodified Ausgrid profiles*, not an implementation or mapping error.
+Evidence:
+
+- **Binding is 1:1 and exact** — assignment row i ↔ `load/001..025` (ieee37) /
+  `load/001..085` (ieee123) in canonical `get_load_targets` order; every
+  customer's profile demonstrably moves its load (e.g. ieee123 assignment 1 →
+  customer 58 → `load/001` (bus 1, rated 40 kW) rides the house's real curve:
+  13.0 kW setpoint at 13:30 → 93.8–111.1 kW in winter evenings).
+- **Setpoint stats over the 7-day window** (rated anchor: 2457 kW ieee37 /
+  3490 kW ieee123):
+
+  | feeder | setpoint P min | mean | p95 | peak | per-ts shape min..max | pool shape |
+  |--------|---------------|------|-----|------|-----------------------|------------|
+  | ieee37 | 910 kW | 3697 | 7078 | 9713 | 0.00 .. 19.65 | 0.00 .. 29.49 |
+  | ieee123 | 1671 kW | 5012 | 8781 | 10167 | 0.00 .. 19.65 | 0.00 .. 29.49 |
+
+- The worst observed voltage steps are winter evenings **at near-peak setpoint**
+  (ieee37 2010-07-02 17:00, source P = 6216 kW; ieee123 2010-07-03 18:30,
+  6753 kW — both feeder maxima). July (winter) evenings run ~1.5× annual mean,
+  and the seed-42 draw includes very-low-mean solar homes whose `profile/mean`
+  ratio spikes up to ~29× for one 85 kW / 40 kW element — a real, rare full-year
+  evening (Dec 2010) for customer 120, and ~19.7× within the July window.
+- Setpoints already sit at **3–4× rated** at peak, so 0.63–0.74 pu tail voltage
+  is exactly what these intentionally-heavily-loaded IEEE feeders (whose rated
+  load already pulls tails to ~0.95–0.98 pu) should do.
+- **Not** caused by: duplicated loads, mis-ordered binding, generator
+  invention, or NaN state. `Z`/`I` (constant-impedance/current) loads, which
+  form 30 % of ieee123 and 48 % of ieee37 loads, draw *below* setpoint at
+  reduced voltage (solved 3490 → 3010 kW, 2457 → 2207 kW at base) — correct
+  physics that further softens, not amplifies, the sag, and validates the CGM's
+  declared load models.
+- No PV is invented: both feeders have **zero generator targets**
+  (`get_generator_targets()` returns `{}`, `model.generators` is empty), so no
+  generation appears anywhere in these normal runs.
+
+Per the brief, values were **not** clipped or normalised to improve voltage;
+the run is the honest normal baseline.
+
+### 5b. De-energized bus explanation (ieee123)
+
+The lone bus below 0.5 pu in the draft run was **bus 610**, the 0.48 kV delta
+secondary of the IEEE-123 **XFM-1** load transformer. It is < 0.5 pu at *every*
+timestamp, including base load, so it is a **floating unloaded transformer
+stub** — known feeder topology from the source workbook, **not** scenario
+construction (no open-switch island leaves anything de-energized; the IEEE-123
+open switches break loops, not islands). The existing physical-data override
+restoring `('61','610')` is correct and preserved. Such stubs are documented as
+excluded bus telemetry (they are not a meaningful network metric), so the final
+runs report `n_deenergized = 0`.
 
 ## 6. Binding & telemetry schema
 
@@ -127,15 +176,32 @@ Files per run, under `results/<feeder>/`:
 
 - `normal_<feeder>_bus_telemetry.csv` — columns `timestamp, feeder_id, bus,
   vpu_AB, vpu_BC, vpu_CA` (interval-start, naive local AEST/AEDT; empty cells
-  for buses with fewer than 3 nodes).
+  for buses with fewer than 2 nodes — i.e. single-phase buses have no L-L pair).
+- `normal_<feeder>_current_telemetry.csv` — columns `timestamp, feeder_id,
+  element, element_type, bus, phase, i_amps`. **Measurement location:** `bus`
+  is the element's *send-end* terminal (`bus1`); `i_amps` is the RMS magnitude
+  of the current flowing **into** the element there, per physical phase node.
+  `element_type` is `line` (network branches from the CGM), `switch` (emitted
+  closed switches, modeled as `Line.sw_*`) or `source` (`Vsource.source` at
+  `SYSsource` — the substation feeder-head current). Phase is derived from the
+  element's node order (node 1/2/3 → phase A/B/C).
 - `normal_<feeder>_summary.csv` — `timestamp, feeder_id, source_p_kw,
   source_q_kvar, converged, n_buses, n_deenergized, vpu_min, vpu_max`.
 - `normal_<feeder>_manifest.json` — parameters, binding order, excluded buses
-  (source bus + floating stubs), schema contract, builder issues.
+  (source bus + floating stubs), telemetry schema + current-location contract,
+  deduplicated builder issues.
 
 Also enabled the pipeline (additive only): `ProfileEngine.get_customer_metadata`
 and `.customer_has_cl` (documented in `workflow.md`; B-8 previously crashed
 without them).
+
+## 6a. Current sanity check
+
+Source amps agree with the solved power flow: e.g. ieee37 at its worst step
+(2010-07-02 17:00, P = 6216 kW, Q ≈ 5178 kvar → S ≈ 8091 kVA at 230 kV) the
+expected feed current is ~20 A/phase; the recorded `source` rows read
+`A=23.2 B=15.3 C=23.2` (unbalanced, per-phase). Custom loads track their
+audited setpoints (Z/I draw less at sag, PQ exactly).
 
 ## 7. Blocker notes
 
@@ -164,10 +230,11 @@ without them).
 
 ## 9. Checkbox status (Phase D)
 
-- [x] Normal scenarios generated on ieee37 and ieee123
-- [x] Real Ausgrid profiles bound to loads (canonical uid order, seed 42)
-- [x] OpenDSS power-flow translation validated against official references
-- [x] Every step converged; zero NaN in telemetry
-- [x] Telemetry + manifest recorded under `results/<feeder>/`
-- [x] Focused tests added (9 pure unit + 2 gated e2e); existing 71 pass
+Definition of Done:
+
+- [x] Attach Ausgrid profile to feeder (1:1 binding, seed 42, both feeders, no feeder branches)
+- [x] Run power-flow simulation (OpenDSS, per-30-min AC solve, all 336 steps converged)
+- [x] Record voltage, current, power (bus L-L pu, per-element send-end phase currents A, source P/Q)
+- [x] Produce valid normal telemetry for ≥ 2 feeders (ieee37 + ieee123, zero NaN, manifests under `results/`)
+- [x] Focused tests green: 9 pure unit + 2 gated e2e + existing 71
 - [x] Report written

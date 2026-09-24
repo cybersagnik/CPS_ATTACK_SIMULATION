@@ -255,19 +255,22 @@ python3 -m simulator.power.normal_scenario \
 | File | What's inside |
 |---|---|
 | `normal_<feeder>_bus_telemetry.csv` | one row per `(timestamp, bus)` — line-to-line voltage per phase, in *per-unit* of that bus's own voltage |
+| `normal_<feeder>_current_telemetry.csv` | one row per `(timestamp, element, phase)` — RMS current (amps) flowing **into** every line/switch at its near-end bus, plus the `Vsource` at the substation (feeder-head current) |
 | `normal_<feeder>_summary.csv` | one row per step — feeder power (`source_p_kw`), whether the solve **converged**, min/max voltage, de-energized bus count |
 | `normal_<feeder>_manifest.json` | recipe of the run — schema, binding, excluded buses, load model |
 
-**What "good" looks like** (7-day runs, all 336 steps):
+**What "good" looks like** (7-day runs, all 336 steps, per-element phase
+currents recorded):
 
-| feeder | solved | NaN readings | energized voltage range | duty |
-|---|---|---|---|---|
-| ieee37 | 336/336 | 0 | 0.64 – 0.99 pu | P 0.9–6.2 MW |
-| ieee123 | 336/336 | 0 | 0.74 – 1.01 pu | P 1.5–6.9 MW |
+| feeder | solved | NaN readings | energized voltage range | duty | de-energized buses |
+|---|---|---|---|---|---|
+| ieee37 | 336/336 | 0 | 0.64 – 0.99 pu | P 0.9–6.2 MW, 36k current rows | 0 |
+| ieee123 | 336/336 | 0 | 0.74 – 1.01 pu | P 1.5–6.9 MW, 87k current rows | 0 |
 
-Every step converged and nothing is blank. (The low voltage dips happen at the
+Every step converged and nothing is invalid. (The low voltage dips happen at the
 rare moments when *all* assigned houses peak at once — a deliberately
-pessimistic worst case, since these test grids are heavily loaded.)
+pessimistic worst case, since these test grids are heavily loaded; see
+`phase_d_report.md` §5a for the full audit.)
 
 ---
 

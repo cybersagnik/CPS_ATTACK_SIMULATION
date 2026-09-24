@@ -54,6 +54,17 @@ class RunScenarioE2ETest(unittest.TestCase):
                         v = float(r[k])
                         self.assertGreater(v, 0.0)
                         self.assertLess(v, 1.5)
+            with open(os.path.join(out, f"{short}_current_telemetry.csv"),
+                      newline="") as f:
+                currents = list(csv.DictReader(f))
+            self.assertGreater(len(currents), 0)
+            self.assertEqual(
+                set(currents[0]) - {"timestamp", "feeder_id", "element",
+                                    "element_type", "bus", "phase", "i_amps"},
+                set())
+            self.assertTrue(all(r["phase"] in ("A", "B", "C") for r in currents))
+            self.assertTrue(all(float(r["i_amps"]) >= 0.0 for r in currents))
+            self.assertTrue(any(r["element_type"] == "source" for r in currents))
 
     def test_ieee37_one_day_converges_and_is_nan_free(self):
         self._assert_feeder_window("ieee37", 1, (2010, 7, 15))
