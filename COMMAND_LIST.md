@@ -189,10 +189,13 @@ git status                    # review what changed
 git diff --stat               # spread of the change
 git log --oneline -5          # match commit-message style
 git add -A                    # stage all intended changes
-git -c user.name="Debonmoy" -c user.email="debonmoy.pal.bwn@gmail.com" commit -m "Add ..."   # one-off identity (no global git config)
+git commit -m "Add ..."       # repo-local identity: Abhishek Kumar Gupta <abhishekkumargupta20020@gmail.com>
 git push                      # to origin/main
 ```
 
 Rules: commit/push only when explicitly asked; never commit source datasets
 (`results/*/normal_*`), secrets, or node modules; keep commit messages short and
-matching repo style (e.g. "Add UPDATES.md, update README").
+matching repo style (e.g. "Add UPDATES.md, update README").  The repo-local
+`user.name` / `user.email` are set to `Abhishek Kumar Gupta /
+abhishekkumargupta20020@gmail.com` so commits are attributed to that GitHub
+account rather than the previous `Debonmoy <debonmoy.pal.bwn@gmail.com>` one.
