@@ -65,6 +65,7 @@ class ManifestRecord:
     source_normal_path: str = ""
     generated_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     artifact_entries: Tuple[ManifestEntry, ...] = ()
+    scenarios: Tuple[Mapping[str, object], ...] = ()
     combined_rows: int = 0
     attack_rows: int = 0
     normal_rows: int = 0
@@ -84,6 +85,7 @@ class ManifestRecord:
                 {"path": e.path, "kind": e.kind, "sha256": e.sha256}
                 for e in self.artifact_entries
             ],
+            "scenarios": [dict(s) for s in self.scenarios],
             "combined_rows": self.combined_rows,
             "attack_rows": self.attack_rows,
             "normal_rows": self.normal_rows,

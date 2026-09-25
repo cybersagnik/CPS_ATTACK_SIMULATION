@@ -58,6 +58,23 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _json_safe(value: object) -> object:
+    """Recursively canonicalise one F/G engine value for JSON export.
+
+    The multi-step scenario keeps its per-stage ``AttackEvent`` objects in
+    ``metadata["_stage_events"]`` (in-memory, for the engine); the canonical
+    serialisable form of an ``AttackEvent`` is its documented ``as_dict()``.
+    Everything else is already JSON-serialisable or must stay verbatim.
+    """
+    if isinstance(value, AttackEvent):
+        return value.as_dict()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 @dataclass(frozen=True)
 class FeederDataset:
     """One feeder's complete, deterministic combined dataset (Task H)."""
@@ -178,7 +195,7 @@ def generate_feeder_dataset(
         record["event_count"] = len(record["events"])
         record["physical_effect"] = dict(result.physical_effect)
         record["as_dict"] = result.as_dict()
-        ground_truth_attacks.append(record)
+        ground_truth_attacks.append(_json_safe(record))
 
     combined = FeederDataset(
         feeder_id=feeder_id,

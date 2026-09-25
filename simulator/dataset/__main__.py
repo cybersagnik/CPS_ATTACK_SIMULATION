@@ -28,7 +28,7 @@ from .exporter import (
 )
 from .generator import FeederDataset, generate_feeder_dataset
 from .manifest import ManifestEntry, write_manifest
-from .schema import validate_combined
+from .schema import MITRE_TECHNIQUE_COLUMN, validate_combined
 
 __all__ = ["main"]
 
@@ -138,6 +138,32 @@ def _one_feeder(
 
     entries.append(ManifestEntry.from_path(combined_path, kind="combined"))
     entries.append(ManifestEntry.from_path(gt_path, kind="ground_truth"))
+
+    scenarios: List[Mapping[str, object]] = [
+        {
+            "attack_id": str(rec.get("attack_id", "")),
+            "feeder_id": feeder_id,
+            "status": "success" if rec.get("is_attack") else "failed",
+            "event_count": int(rec.get("event_count", 0)),
+            "mitre_technique": str(rec.get(MITRE_TECHNIQUE_COLUMN, "")),
+            "output": f"attack_{feeder_id}_{rec.get('attack_id', '')}_dataset.csv",
+        }
+        for rec in attacks
+    ]
+    scenarios.extend(
+        {
+            "attack_id": aid,
+            "feeder_id": feeder_id,
+            "status": "failed",
+            "event_count": 0,
+            "mitre_technique": "",
+            "output": "",
+            "failure_reason": reason,
+        }
+        for aid, reason in sorted(ground_truth.get("failed_scenarios", {}).items())
+    )
+    scenarios.sort(key=lambda s: str(s.get("attack_id", "")))
+
     write_manifest(
         entries,
         results_dir=results_dir,
@@ -146,6 +172,7 @@ def _one_feeder(
         record={
             "combined_sha256": combined_sha,
             "determinism_digest": combined_sha,
+            "scenarios": scenarios,
         },
     )
 

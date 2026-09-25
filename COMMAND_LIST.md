@@ -12,7 +12,7 @@ Quick index of entry points:
 | E | `python -m simulator.network.normal` | normal (attack-free) network-event CSV per feeder |
 | F/G | `python -m simulator.attack` | run the six MITRE-ICS attack scenarios |
 | H | `python -m simulator.dataset` | combined NORMAL+ATTACK dataset (CSV/JSON/manifest, fail-closed) |
-| tests | `python -m pytest -q` | full suite = 98 passed, 2 skipped, 60 subtests |
+| tests | `python -m pytest -q` | full suite = 103 passed, 2 skipped, 72 subtests |
 | docs | files at repo root + `simulator/*/` | per-phase workflow and scenario reference |
 
 ## 1. Environment
@@ -89,11 +89,30 @@ Phase F/G writes no files - persistence belongs to Task H.
 python -m simulator.dataset --feeders ieee37,ieee123 --seed 42 --events-dir results --results-dir results/dataset
 ```
 
-Per feeder this generates, validates and exports: one combined CSV
-(`combined_<feeder>_<seed>.csv`), one ground-truth JSON, one attack-only CSV per
-scenario, and a manifest with SHA-256 digests.  Exit code 0 only if *every*
-feeder succeeds (fail-closed; the registry auto-includes all six scenarios, so a
-new registered scenario is picked up without code changes).
+Per feeder this generates, validates and exports, for **all six** registered
+scenarios (the three extension scenarios are picked up automatically through the
+`REGISTERED_SCENARIOS` registry - no exporter change needed per scenario):
+
+- combined CSV `combined_<feeder>_dataset.csv` (canonical 25 columns),
+- one attack-only CSV per scenario `attack_<feeder>_<attack_id>_dataset.csv`,
+- ground-truth JSON `ground_truth_<feeder>.json` (full `AttackResult.as_dict()`
+  per scenario; the multi-step `metadata["_stage_events"]` are serialised as
+  event dicts, so the JSON is always loadable by `json`),
+- manifest `manifest_<feeder>.json` with SHA-256 digests + a per-scenario
+  `scenarios` record (attack id, feeder, status, event count, MITRE technique,
+  output file).
+
+Exit code 0 only if *every* feeder succeeds (fail-closed).  Verified run
+results (seed 42):
+
+```
+OK   ieee37    combined=75152  normal=74592  attack=560   scenarios_ok=6
+OK   ieee123   combined=157870 normal=156576 attack=1294  scenarios_ok=6
+```
+
+The three extension scenarios export 2 / 2 / 278 events (ieee37) and
+2 / 2 / 645 events (ieee123) for false_measurement / communication_disruption /
+multi_step_attack respectively.
 
 ## 5. Running the tests
 
@@ -102,7 +121,7 @@ Per-module:
 ```powershell
 python -m unittest simulator.attack.test_attack_engine   -v   # 50 tests (attack scenarios + MITRE catalog + both feeders)
 python -m unittest simulator.network.test_network_events -v   # 17 tests (Phase E)
-python -m unittest simulator.dataset.test_dataset        -v   # 10 tests (Task H)
+python -m unittest simulator.dataset.test_dataset        -v   # 15 tests (Task H: schema + manifest + real CSV/JSON export)
 python -m unittest simulator.power.test_dss_builder      -v   # DSS model builder
 ```
 
@@ -111,13 +130,14 @@ Single file / single test:
 ```powershell
 python -m pytest -q simulator/attack/test_attack_engine.py
 python -m pytest -q simulator/attack/test_attack_engine.py::test_all_registered_scenarios_execute_on_both_real_feeder_models
+python -m pytest -q simulator/dataset/test_dataset.py::TaskHExportIntegrationTests
 ```
 
 Full suite (run from repo root; `opendssdirect` present so physical tests execute):
 
 ```powershell
 python -m pytest -q
-# expected: 98 passed, 2 skipped, 60 subtests passed
+# expected: 103 passed, 2 skipped, 72 subtests passed
 # (2 skips are the OpenDSS-unavailable guards; stderr "C stack trace" at exit is pre-existing Windows noise)
 ```
 
@@ -142,6 +162,15 @@ python -c "import re,pathlib; hits=[(p,l) for p in pathlib.Path('simulator/attac
 ```
 
 Determinism (seed 42): run any scenario twice and diff; outputs must be identical.
+
+Verify a Task H export (files, scenario ids, MITRE, chronology, ground truth):
+
+```powershell
+python -m simulator.dataset --feeders ieee37,ieee123 --seed 42 --events-dir results --results-dir $env:TEMP\cps_ds_verify
+Get-ChildItem $env:TEMP\cps_ds_verify | Where-Object { $_.Name -match 'false_measurement|communication_disruption|multi_step_attack' } | Select-Object Name, Length
+python -c "import json; gt=json.load(open(r'$env:TEMP\cps_ds_verify\ground_truth_ieee37.json', encoding='utf-8')); print([ (r['attack_id'], r['event_count'], r['mitre_technique_ids']) for r in gt['attacks'] ])"
+python -c "import json; m=json.load(open(r'$env:TEMP\cps_ds_verify\manifest_ieee123.json', encoding='utf-8')); print([ (s['attack_id'], s['status'], s['event_count'], s['mitre_technique']) for s in m['scenarios'] ])"
+```
 
 ## 7. Windows / WSL notes
 
