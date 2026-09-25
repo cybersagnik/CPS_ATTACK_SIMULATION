@@ -11,20 +11,8 @@ details and validation evidence; this file is the readable map.*
 
 The starting point is the Ausgrid "solar home" trial: 300 households recorded
 their electricity use every half hour for one year. The pipeline turns that
-diary into a labelled cyber-physical attack dataset:
-
-1. Parse and validate the raw diary, give every reading a timestamp, and merge
-   each house into one timeline of load + solar power (steps 1–4).
-2. Assign a fixed, seeded set of houses to the customer slots of a test power
-   grid, solve the power flow for every half-hour slot, and write the results
-   as telemetry (steps 5–7).
-3. Turn the telemetry into a SCADA message stream, the way a real operator
-   would see it (step 8).
-4. Run six MITRE ATT&CK for ICS attack scenarios against that stream, each
-   with a measurable physical effect where one applies (step 9).
-
-Everything downstream of step 7 is feeder-agnostic: the same code runs the
-ieee37 and ieee123 grids.
+diary into a labelled cyber-physical attack dataset. The rest of this document
+is a walk-through; section 1 explains the architecture stage by stage.
 
 ```
 Ausgrid "Solar home" CSV (raw diary)
@@ -44,7 +32,165 @@ Ausgrid "Solar home" CSV (raw diary)
 
 ---
 
-## 1. Units
+## 1. Architecture — what feeds what
+
+The system is a chain of stages: each stage reads the previous stage's files,
+does one job, and writes the next stage's input. It is feeder-agnostic by
+design — no stage is specific to IEEE-37 or IEEE-123. The diagram below is the
+README architecture, and the subsections explain every stage with its inputs
+and outputs.
+
+```
+                      INPUT DATA
+                          |
+          +---------------+---------------+
+          |                               |
+          v                               v
+   Ausgrid diary                  Feeder model
+   (raw load + solar usage)       (IEEE-37 / IEEE-123)
+          |                               |
+          v                               v
+   Profile engine                 Feeder adapter (dss_builder)
+          |                               |
+          +---------------+---------------+
+                          |
+                          v
+                 Common Grid Model
+                          |
+                          v
+                  Normal Simulation
+                          |
+                          v
+                  Normal Grid State
+                          |
+                          v
+                   Attack Engine
+                          |
+              +-----------+-----------+
+              |                       |
+              v                       v
+         Cyber Attack           MITRE Mapping
+              |                       |
+              +-----------+-----------+
+                          |
+                          v
+                 Attack Simulation
+                          |
+              +-----------+-----------+
+              |                       |
+              v                       v
+         Network Data             Grid Data
+              |                       |
+              +-----------+-----------+
+                          |
+                          v
+                    Ground Truth
+                          |
+                          v
+                   Attack Dataset
+```
+
+### Stage A — Input data
+
+Function:
+- **Ausgrid diary** — the raw `"Solar home 2010-2011.csv"`: real half-hourly household load and solar usage for a year. It gives the simulated grid a realistic, data-driven daily shape.
+- **Feeder model** — a distribution-grid structure from `feeders/`: buses, lines, transformers, loads, switches, regulators, capacitors.
+
+Input → Output:
+- Diary → Profile engine (stage B); feeder model → feeder adapter (stage C).
+
+### Stage B — Profile engine (maps to steps 1–5)
+
+Function:
+- Parse and certify the raw diary: row counts, missing values, every value parses.
+- Give every reading a timestamp (`ausgrid_timeseries.py`).
+- Merge each house into one load + solar timeline in kW (`ausgrid_profiles.py`).
+- Provide indexed, in-memory lookup of any house (`profile_engine.py`).
+- Assign a fixed, seeded set of houses to the grid's customer slots (`profile_assignment.py`).
+
+Input → Output:
+- `"Solar home 2010-2011.csv"` → `ausgrid_profiles_2010_2011.csv` (~360 MB) + `profile_assignment_25/85_seed42.csv`.
+
+### Stage C — Feeder adapter / Common Grid Model (maps to step 6)
+
+Function:
+- Translate the neutral grid model into the OpenDSS language so the power-flow solver can run it (`dss_builder.py`).
+- Confine all feeder-specific detail to this one stage; the rest of the pipeline never sees the feeder's source format.
+
+Input → Output:
+- Common grid model → OpenDSS circuit, built in memory at run time.
+
+### Stage D — Normal simulation → Normal grid state (maps to step 7)
+
+Function:
+- Bind the assigned profiles to the feeder's loads.
+- Solve the power flow for every half-hour timestamp.
+- Record per-bus voltage, per-element current, feeder summary and convergence.
+- Produce the honest, no-attack baseline ("Normal Grid State") that attacks are later measured against.
+
+Input → Output:
+- assignment + profiles + OpenDSS circuit → `results/<feeder>/normal_<feeder>_{bus,current}_telemetry.csv`, `normal_<feeder>_summary.csv`, `normal_<feeder>_manifest.json`.
+
+### Stage E — Network layer (maps to step 8)
+
+Function:
+- Turn the telemetry into a SCADA conversation: the operator station (`SCADA_MASTER`) polls the field device (`RTU_<feeder>`), which answers with one TELEMETRY per measurement.
+- Give every message a deterministic id, sequence and `quality`/`delivery_status`.
+
+Input → Output:
+- telemetry CSVs → `results/<feeder>/normal_<feeder>_network_events.csv`.
+
+### Stage F — Attack engine → Cyber attack + MITRE mapping (maps to step 9)
+
+Function:
+- Take a scenario, check its preconditions, and stop with a structured `FAILED` result if they are unmet.
+- Discover a compatible target dynamically from the inventory — never hardcoded.
+- Map the scenario to its MITRE ATT&CK for ICS technique(s).
+- Re-solve the OpenDSS feeder for the tampered state and measure the physical effect (voltage/power deltas).
+- Emit the attack's network messages, labelled `injected=1` where the operator should not trust them.
+
+Input → Output:
+- network-events baseline + feeder model → per-scenario attack reports (printed) + physical-effect deltas.
+
+### Stage G — Attack simulation → Network data + Grid data (maps to Task H)
+
+Function:
+- Merge the normal rows and the attack rows into one timestamp-sorted stream.
+- Carry both the cyber side (forged / dropped / commanded messages) and the grid side (the measurements they refer to and the physical deltas they caused) in the same schema.
+
+Input → Output:
+- `normal_*_network_events.csv` + attack reports → `results/dataset/combined_<feeder>_dataset.csv`.
+
+### Stage H — Ground truth + validation (Task I)
+
+Function:
+- Record, per scenario, what the attack was, its target, start/end, MITRE technique(s), `is_attack`, and the physical effect.
+- Re-certify the combined dataset end to end: MITRE label ↔ scenario ↔ `injected` flag consistency, row counts, chronology.
+
+Input → Output:
+- combined dataset + scenario metadata → ground-truth metadata + `validation.json` report.
+
+### Stage I — Attack dataset (final artifact)
+
+Function:
+- Provide the labelled dataset consumed by later phases: one schema, sorted by timestamp, with per-row labels and per-scenario ground truth.
+
+Input → Output:
+- `results/dataset/*` → the input to the later detection / MITRE-coverage phases.
+
+The README summarises the idea like this:
+
+```
+FEEDER → PROFILE → NORMAL → ATTACK → RECORD
+```
+
+Take different feeder models, give them realistic operating conditions, run
+controlled attacks, observe what changes on both the network and the grid, and
+save the events with accurate MITRE and attack labels.
+
+---
+
+## 2. Units
 
 Three quantities appear throughout the pipeline; they are not interchangeable:
 
@@ -61,7 +207,7 @@ CL does not exist for the other 161 houses.
 
 ---
 
-## 2. Step 1 — `grid_data/ausgrid_parser.py`
+## 3. Step 1 — `grid_data/ausgrid_parser.py`
 
 **What it does.** The raw Ausgrid CSV needs cleaning: a one-line preamble, no
 row-quality column, dates like `1-Jul-10`. This script reads the file, skips
@@ -88,7 +234,7 @@ stage.
 
 ---
 
-## 3. Step 2 — `grid_data/ausgrid_timeseries.py`
+## 4. Step 2 — `grid_data/ausgrid_timeseries.py`
 
 **What it does.** The parser's rows are wide (one row = one house-day with 48
 columns named `0:30`, `1:00`, … `0:00`). This script melts them into one row
@@ -115,7 +261,7 @@ python3 grid_data/ausgrid_timeseries.py "Solar home 2010-2011.csv"
 
 ---
 
-## 4. Step 3 — `grid_data/ausgrid_profiles.py`
+## 5. Step 3 — `grid_data/ausgrid_profiles.py`
 
 **What it does.** Merges, for every half-hour slot, `GC + CL` into **load**
 and keeps `GG` as **solar**, converting energy to power (`kW = kWh × 2`).
@@ -140,7 +286,7 @@ python3 grid_data/ausgrid_profiles.py "Solar home 2010-2011.csv" --validate
 
 ---
 
-## 5. Step 4 — `grid_data/profile_engine.py`
+## 6. Step 4 — `grid_data/profile_engine.py`
 
 **What it does.** A library, not a script: it loads the 360 MB profile file
 once, builds an index, and then answers "give me house 58's whole year" in
@@ -156,7 +302,7 @@ engine.get_customer_profile(58)   # that house's 17,520 samples
 
 ---
 
-## 6. Step 5 — `grid_data/profile_assignment.py`
+## 7. Step 5 — `grid_data/profile_assignment.py`
 
 **What it does.** A power grid has a fixed number of customer slots (25 for
 ieee37, 85 for ieee123). This script chooses houses from the pool uniformly at
@@ -195,7 +341,7 @@ seed, cl_present`.
 
 ---
 
-## 7. Step 6 — `simulator/power/dss_builder.py`
+## 8. Step 6 — `simulator/power/dss_builder.py`
 
 **What it does.** The grid model (topology, lines, transformers, loads) lives
 in a neutral "Common Grid Model" format, which the OpenDSS power-flow engine
@@ -219,7 +365,7 @@ a connection label, and a matrix-format quirk).
 
 ---
 
-## 8. Step 7 — `simulator/power/normal_scenario.py`
+## 9. Step 7 — `simulator/power/normal_scenario.py`
 
 **What it does.** Runs the simulation once per half-hour step:
 
@@ -278,7 +424,7 @@ worst case, because these test grids are heavily loaded (see
 
 ---
 
-## 9. Step 8 — `simulator/network/normal.py`
+## 10. Step 8 — `simulator/network/normal.py`
 
 **What it does.** Two parties appear: `SCADA_MASTER` (the operator station)
 and `RTU_<feeder>` (the field device on the grid). For every half-hour slot
@@ -339,7 +485,7 @@ Every value equals the telemetry row it came from — for example, bus 718's
 
 ---
 
-## 10. Step 9 — `simulator/attack/`
+## 11. Step 9 — `simulator/attack/`
 
 **What it does.** The attack engine runs six scenarios against the *same* grid
 model and the *same* network-event baseline, one scenario at a time. Each
@@ -407,7 +553,7 @@ re-certifies it end to end — see `task_h_report.md` and
 
 ---
 
-## 11. Reproducing the pipeline
+## 12. Reproducing the pipeline
 
 ```bash
 # 0. one-time: engine and dependencies (system Python; no venv in this environment)
@@ -460,7 +606,7 @@ an hour per feeder, so use `--days 7` for experiments.
 
 ---
 
-## 12. Why each stage exists
+## 13. Why each stage exists
 
 | Script | Role | If removed |
 |---|---|---|
