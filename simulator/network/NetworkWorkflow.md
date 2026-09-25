@@ -200,7 +200,7 @@ at 001 per scenario run); scenario id follows the Phase E convention
 - `physical.py` — optional OpenDSS physical-effect hook (baseline vs
   overridden solve deltas)
 - `mitre.py` — verified MITRE ATT&CK for ICS catalog
-- `scenarios/` — the three shipped scenario implementations
+- `scenarios/` — the six shipped scenario implementations
 - `engine.SCENARIOS` + `scenarios.REGISTERED_SCENARIOS` — scenario registry
 
 ### 3. Shipped scenarios (Task G) with MITRE mappings
@@ -210,9 +210,12 @@ at 001 per scenario run); scenario id follows the Phase E convention
 | `reconnaissance`            | T0846 Remote System Discovery         | Discovery (TA0102)    |
 | `unauthorized_command`      | T0855 Unauthorized Command Message    | Impair Process Control (TA0106) |
 | `parameter_modification`    | T0836 Modify Parameter                | Impair Process Control (TA0106) |
+| `false_measurement`         | T0856 Spoof Reporting Message         | Evasion (TA0103); also Impair Process Control (TA0106) |
+| `communication_disruption`  | T0804 Block Reporting Message         | Inhibit Response Function (TA0107) |
+| `multi_step_attack`         | T0846 + T0855 + T0836 (composed timeline) | Discovery; Impair Process Control |
 
 Technique names/tactics were verified against the official ATT&CK for ICS
-source (`https://attack.mitre.org`); see `mitre.py` for the rationale recorded
+source (`https://attack.mitre.org`, v15.1) and CISA; see `mitre.py` for the rationale recorded
 per technique.  Target selection is dynamic and feeder-agnostic (no hardcoded
 feeder/bus/device ids in production code; the engine also runs unmodified on a
 hypothetical unknown feeder — see test `FutureFeederIndependenceTests`).  When
@@ -231,10 +234,12 @@ no compatible target exists, the engine returns a structured FAILED `AttackResul
     python3 -m unittest simulator.network.test_network_events   # Phase E (must stay green)
     python3 -m unittest simulator.attack.test_attack_engine -v  # attack engine + scenarios
 
-Real-data coverage: all three scenarios × {ieee37, ieee123} run to SUCCESS on
+Real-data coverage: all six scenarios × {ieee37, ieee123} run to SUCCESS on
 the real models + real `normal_*_network_events.csv`, every generated event
 passes `validate_attack_event`, sequences are contiguous, physical effect
-deltas are non-degenerate, and Phase E tests remain green.
+deltas are non-degenerate for the modifying scenarios and the honest zero for
+`false_measurement` / `communication_disruption` (grid unchanged by design),
+and Phase E tests remain green.
 
 ---
 

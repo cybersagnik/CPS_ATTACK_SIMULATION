@@ -32,8 +32,11 @@ original_value, reported_value, command_id, result) + Task H
 
 Row labels: ``NORMAL`` (Phase E verbatim, no attack metadata) and ``ATTACK``
 (Phase F/G event + attack_id + MITRE technique).  MITRE ids come from the
-scenario's registered mapping (T0846 reconnaissance, T0855 unauthorized
-command, T0836 parameter modification).
+scenario's registered mapping: T0846 reconnaissance, T0855 unauthorized
+command, T0836 parameter modification, T0856 false measurement, T0804
+communication disruption, and T0846;T0855;T0836 for the composed multi-step
+scenario (its primary/lead technique id is used in the ``mitre_technique``
+column).
 
 ## Determinism
 

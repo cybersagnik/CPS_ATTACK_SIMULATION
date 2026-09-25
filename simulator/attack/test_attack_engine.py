@@ -58,7 +58,7 @@ def _events_csv(feeder_id: str) -> Path:
 
 class MITRECatalogTests(unittest.TestCase):
     def test_technique_ids_are_the_verified_real_ones(self):
-        for technique_id in ("T0846", "T0855", "T0836"):
+        for technique_id in ("T0846", "T0855", "T0836", "T0856", "T0803", "T0804"):
             mapping = mitre_for(technique_id)
             self.assertIsInstance(mapping, MITREMapping)
             self.assertEqual(mapping.technique_id, technique_id)
@@ -73,6 +73,18 @@ class MITRECatalogTests(unittest.TestCase):
     def test_t0855_and_t0836_impair_process_control(self):
         self.assertEqual(mitre_for("T0855").tactic, "Impair Process Control")
         self.assertEqual(mitre_for("T0836").tactic, "Impair Process Control")
+
+    def test_t0856_is_spoof_reporting_message(self):
+        m = mitre_for("T0856")
+        self.assertEqual(m.technique_name, "Spoof Reporting Message")
+        self.assertEqual(m.tactic, "Evasion")
+        self.assertIn("Impair Process Control", m.rationale)
+
+    def test_t0803_and_t0804_block_messages_inhibit_response_function(self):
+        self.assertEqual(mitre_for("T0803").technique_name, "Block Command Message")
+        self.assertEqual(mitre_for("T0804").technique_name, "Block Reporting Message")
+        self.assertEqual(mitre_for("T0803").tactic, "Inhibit Response Function")
+        self.assertEqual(mitre_for("T0804").tactic, "Inhibit Response Function")
 
     def test_unknown_technique_raises(self):
         with self.assertRaises(KeyError):
@@ -386,11 +398,22 @@ class ScenarioRealDataTests(_RealModelMixin, unittest.TestCase):
         self.assertEqual(len(seen), len(set(seen)))
 
     def test_mitre_mappings_of_scenario_implementations(self):
-        self.assertEqual(REGISTERED_SCENARIOS["reconnaissance"].mitre[0].technique_id, "T0846")
-        self.assertEqual(REGISTERED_SCENARIOS["unauthorized_command"].mitre[0].technique_id, "T0855")
-        self.assertEqual(REGISTERED_SCENARIOS["parameter_modification"].mitre[0].technique_id, "T0836")
+        expected = {
+            "reconnaissance": "T0846",
+            "unauthorized_command": "T0855",
+            "parameter_modification": "T0836",
+            "false_measurement": "T0856",
+            "communication_disruption": "T0804",
+            "multi_step_attack": "T0846;T0855;T0836",
+        }
+        self.assertEqual(set(expected), set(REGISTERED_SCENARIOS))
+        for attack_id, technique_ids in expected.items():
+            attack = REGISTERED_SCENARIOS[attack_id]
+            self.assertEqual(
+                ";".join(m.technique_id for m in attack.mitre), technique_ids, attack_id
+            )
 
-    def test_all_three_scenarios_execute_on_both_real_feeder_models(self):
+    def test_all_registered_scenarios_execute_on_both_real_feeder_models(self):
         for feeder_id in ("ieee37", "ieee123"):
             for attack in REGISTERED_SCENARIOS.values():
                 with self.subTest(feeder=feeder_id, attack=attack.attack_id):
@@ -470,6 +493,127 @@ class ScenarioRealDataTests(_RealModelMixin, unittest.TestCase):
         self.assertEqual(scenario_id_for("reconnaissance", "ieee37"), "reconnaissance_ieee37")
         self.assertEqual(scenario_id_for("parameter_modification", "ieee123"),
                          "parameter_modification_ieee123")
+
+    def test_false_measurement_spoofs_a_real_measurement_point(self):
+        for feeder_id in ("ieee37", "ieee123"):
+            with self.subTest(feeder=feeder_id):
+                result = self._run(feeder_id, REGISTERED_SCENARIOS["false_measurement"])
+                self.assertEqual(result.result, RESULT_SUCCESS)
+                self.assertEqual(result.target.kind, "measurement")
+                self.assertIn(result.target.sub_kind, ("voltage", "current", "power"))
+                self.assertNotEqual(result.injected_value, result.original_value)
+                self.assertEqual(result.reported_value, result.injected_value)
+                self.assertEqual(result.metadata["true_value"], result.original_value)
+                self.assertFalse(result.metadata["cyber_matches_physical"])
+                rows = result.event_rows()
+                self.assertEqual(len(rows), 2)
+                query = rows[0]
+                report = rows[1]
+                self.assertEqual(query["message_type"], "QUERY")
+                self.assertEqual(query["injected"], "1")
+                self.assertEqual(query["result"], "READ")
+                self.assertEqual(report["message_type"], "REPORT")
+                self.assertEqual(report["injected"], "1")   # forged reporting message
+                self.assertEqual(report["point_id"], result.target.point_id)
+                self.assertEqual(report["original_value"], repr(result.original_value))
+                self.assertEqual(report["reported_value"], repr(result.reported_value))
+                self.assertEqual(report["result"], "SPOOFED")
+
+    def test_false_measurement_zero_physical_deltas(self):
+        for feeder_id in ("ieee37", "ieee123"):
+            with self.subTest(feeder=feeder_id):
+                result = self._run(feeder_id, REGISTERED_SCENARIOS["false_measurement"])
+                effect = result.physical_effect
+                self.assertEqual(effect["status"], "computed")
+                self.assertEqual(effect["deltas"]["source_p_kw"], 0.0)
+                self.assertEqual(effect["deltas"]["vpu_min"], 0.0)
+                self.assertIn("physical_truth_point", effect)
+
+    def test_communication_disruption_blocks_the_reporting_message(self):
+        for feeder_id in ("ieee37", "ieee123"):
+            with self.subTest(feeder=feeder_id):
+                result = self._run(feeder_id, REGISTERED_SCENARIOS["communication_disruption"])
+                self.assertEqual(result.result, RESULT_SUCCESS)
+                self.assertEqual(result.target.kind, "measurement")
+                self.assertEqual(result.reported_value, result.original_value)
+                rows = result.event_rows()
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(rows[0]["message_type"], "QUERY")
+                self.assertEqual(rows[0]["injected"], "1")   # adversarial block instruction
+                self.assertEqual(rows[0]["result"], "BLOCK")
+                report = rows[1]
+                self.assertEqual(report["message_type"], "REPORT")
+                self.assertEqual(report["injected"], "0")    # genuine measurement...
+                self.assertEqual(report["delivery_status"], "DROPPED")  # ...never delivered
+                self.assertEqual(report["result"], "BLOCKED")
+                self.assertEqual(report["point_id"], result.target.point_id)
+                self.assertEqual(report["original_value"], repr(result.original_value))
+
+    def test_communication_disruption_keeps_grid_operating_zero_deltas(self):
+        for feeder_id in ("ieee37", "ieee123"):
+            with self.subTest(feeder=feeder_id):
+                result = self._run(feeder_id, REGISTERED_SCENARIOS["communication_disruption"])
+                effect = result.physical_effect
+                self.assertEqual(effect["status"], "computed")
+                self.assertEqual(effect["deltas"]["source_p_kw"], 0.0)
+                self.assertEqual(effect["deltas"]["vpu_min"], 0.0)
+                self.assertTrue(result.metadata["message_loss"])
+
+    def test_multi_step_attack_composes_stages_in_chronological_order(self):
+        for feeder_id in ("ieee37", "ieee123"):
+            with self.subTest(feeder=feeder_id):
+                result = self._run(feeder_id, REGISTERED_SCENARIOS["multi_step_attack"])
+                self.assertEqual(result.result, RESULT_SUCCESS)
+                self.assertEqual(result.target.kind, "scope")
+                self.assertEqual(
+                    ";".join(m.technique_id for m in result.mitre),
+                    "T0846;T0855;T0836",
+                )
+                stages = result.metadata["stages"]
+                self.assertEqual(
+                    [s["attack_id"] for s in stages],
+                    ["reconnaissance", "unauthorized_command", "parameter_modification"],
+                )
+                self.assertGreater(stages[0]["event_count"], 10)      # recon surface
+                self.assertEqual(stages[1]["event_count"], 2)         # command + ack
+                self.assertEqual(stages[2]["event_count"], 2)         # command + ack
+                # strictly chronological timeline: stages occupy distinct, ordered
+                # timestamps (t, t+1s, t+2s)
+                ts_order = []
+                for event in result.events:
+                    if event.message_type in ("QUERY", "COMMAND"):
+                        ts_order.append(event.timestamp)
+                self.assertEqual(ts_order, sorted(ts_order))
+                self.assertEqual(
+                    {result.events[0].timestamp, result.events[-1].timestamp},
+                    {"2010-07-01T00:00:00", "2010-07-01T00:00:02"},
+                )
+                message_counts: Dict[str, int] = {}
+                for event in result.events:
+                    message_counts[event.message_type] = (
+                        message_counts.get(event.message_type, 0) + 1
+                    )
+                self.assertGreaterEqual(message_counts.get("QUERY", 0), 2)
+                self.assertEqual(message_counts.get("COMMAND", 0), 2)
+                self.assertGreater(message_counts.get("REPORT", 0), 10)
+                # ground truth carries every stage technique
+                self.assertEqual(
+                    result.ground_truth()["mitre_technique_ids"],
+                    "T0846;T0855;T0836",
+                )
+
+    def test_multi_step_attack_combined_physical_footprint(self):
+        for feeder_id in ("ieee37", "ieee123"):
+            with self.subTest(feeder=feeder_id):
+                result = self._run(feeder_id, REGISTERED_SCENARIOS["multi_step_attack"])
+                effect = result.physical_effect
+                self.assertEqual(effect["status"], "computed")
+                overrides = effect["override"]
+                self.assertGreaterEqual(len(overrides), 2)  # command + parameter stages
+                self.assertNotEqual(effect["deltas"]["source_p_kw"], 0.0)
+                # the two modifying stages each solved a real physical effect
+                for stage in result.metadata["stages"][1:]:
+                    self.assertGreater(len(stage["physical_deltas"]), 0)
 
 
 class PhysicalEffectAssertions(ScenarioRealDataTests):

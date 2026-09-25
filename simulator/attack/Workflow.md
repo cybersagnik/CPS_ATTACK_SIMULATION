@@ -1,6 +1,6 @@
 # Attack Engine Workflow (simulator/attack) — Task F / G
 
-Canonical workflow record for the attack engine (Task F) and the first three
+Canonical workflow record for the attack engine (Task F) and the six
 MITRE ATT&CK for ICS scenarios (Task G) of the Phase 1 attack-dataset pipeline.
 Companion document to `simulator/network/NetworkWorkflow.md` (the Phase E
 normal-network baseline this phase builds on top of) — see also the package
@@ -58,9 +58,12 @@ Writes (in-memory only):
 1. **Declarations / catalog** — `mitre.py`: verified MITRE ATT&CK for ICS
    technique catalog `T0846` (Remote System Discovery / Discovery),
    `T0855` (Unauthorized Command Message / Impair Process Control),
-   `T0836` (Modify Parameter / Impair Process Control), each with a recorded
-   rationale.  Technique ids checked against the official
-   `https://attack.mitre.org` source; nothing invented.
+   `T0836` (Modify Parameter / Impair Process Control), `T0856` (Spoof
+   Reporting Message / Evasion, also Impair Process Control), `T0803` (Block
+   Command Message / Inhibit Response Function), `T0804` (Block Reporting
+   Message / Inhibit Response Function), each with a recorded rationale.
+   Technique ids checked against the official `https://attack.mitre.org` source
+   (v15.1) and the CISA entries; nothing invented.
 2. **Event model** — `events.py`: `AttackEvent` = Phase E 16-column schema
    plus the planned extension (`injected`, `replay_of_event_id`,
    `original_value`, `reported_value`, `command_id`, `result`); new logical
@@ -94,13 +97,16 @@ Writes (in-memory only):
    emits normally-open switch elements, so physical.py now creates them
    (disabled) and a "close the open switch" attack produces a genuine effect.
 8. **Scenarios** — `scenarios/`: `ReconnaissanceAttack` (T0846),
-   `UnauthorizedCommandAttack` (T0855), `ParameterModificationAttack` (T0836);
+   `UnauthorizedCommandAttack` (T0855), `ParameterModificationAttack` (T0836),
+   `FalseMeasurementAttack` (T0856), `CommunicationDisruptionAttack` (T0804),
+   `MultiStepAttack` (T0846 + T0855 + T0836, a composed timeline);
    registered in `REGISTERED_SCENARIOS` / `engine.SCENARIOS`; scenario ids
    follow the Phase E convention `normal_<feeder>`-style `<attack_id>_<feeder_id>`.
-9. **Tests** — `test_attack_engine.py` (36 tests): catalog, point/inventory/
+9. **Tests** — `test_attack_engine.py` (50 tests): catalog, point/inventory/
    selection units, event model, engine wiring, fail-closed behaviour,
    **future-feeder independence** (a never-seen feeder id works), real-data
-   execution on ieee37+ieee123, and OpenDSS-gated physical-effect assertions.
+   execution on ieee37+ieee123, and OpenDSS-gated physical-effect assertions
+   for every scenario including the three new ones.
 10. **Validation & audit** — real-data runs for both feeders; hardcoding
     audit (feeder/bus ids only in tests/docstrings; production uses generic
     `startswith("BUS_")`-style pattern classification); Phase E tests kept
@@ -118,6 +124,22 @@ Writes (in-memory only):
 - Parameter Modification scales kw *and* kvar so the load power factor is
   preserved (honest effect), reports the tampered value as the operating value
   (`injected=1` on the REPORT), and keeps the original value everywhere.
+- False Measurement and Communication Disruption both target a *measurement*
+  point (prefer voltage) and compute a **real** physical snapshot with
+  `override={}`: the deltas are the honest zero — the physical truth is
+  unchanged, which is the whole point (cyber/network and physical data tell
+  different stories).
+- Communication Disruption is the one scenario that needs a non-normal
+  `delivery_status` (`DROPPED` on the genuine REPORT).  The events.py contract
+  permits non-normal delivery/latency values where a specific scenario requires
+  them — this is that case; the QUERY instruction is injected (1), the blocked
+  measurement REPORT is genuine (0) but never delivered.
+- Multi-Step composes the three single-step scenarios through the *same*
+  `AttackEngine`, shares one `scenario_id` and steps stage timestamps by 1s
+  (t / t+1s / t+2s) so the exported timeline is strictly chronological.  Its
+  combined physical effect solves the real feeder once at baseline and once
+  with the union of every modifying stage's overrides.  Composite preconditions
+  are verified before any stage executes (fail-clean).
 - A fresh physical circuit per solve → state restoration is automatic; nothing
   leaks between runs.
 - Real-data counts (unique telemetry points): ieee37 = 221, ieee123 = 465.
@@ -129,7 +151,6 @@ to copy-paste sequence (install, tests, scenario CLI, pytest, audit).
 
 ## 7. Files
 
-- `simulator/attack/__init__.py`
 - `simulator/attack/__main__.py` — CLI (`python3 -m simulator.attack`)
 - `simulator/attack/base.py` — `Attack`, `AttackContext`, `AttackActionResult`
 - `simulator/attack/engine.py` — `AttackEngine`, `SCENARIOS`
@@ -138,8 +159,8 @@ to copy-paste sequence (install, tests, scenario CLI, pytest, audit).
 - `simulator/attack/events.py` — `AttackEvent` + validation
 - `simulator/attack/physical.py` — OpenDSS effect hook
 - `simulator/attack/mitre.py` — verified technique catalog
-- `simulator/attack/scenarios/` — the three scenarios + registry
-- `simulator/attack/test_attack_engine.py` — 36 tests
+- `simulator/attack/scenarios/` — the six scenarios + registry
+- `simulator/attack/test_attack_engine.py` — 50 tests
 - `simulator/attack/README.md`, `simulator/attack/Workflow.md`,
   `simulator/attack/AttackScenarios.md` — documentation
 - `simulator/network/NetworkWorkflow.md` — Phase E baseline (+ Phase F/G section)

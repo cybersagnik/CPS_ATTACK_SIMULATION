@@ -1,6 +1,6 @@
 # simulator/attack — Attack Engine & MITRE-ICS Scenarios (Task F / G)
 
-Feeder-agnostic attack engine and the first three MITRE ATT&CK for ICS
+Feeder-agnostic attack engine and the six MITRE ATT&CK for ICS
 scenarios for the CPS attack-dataset pipeline.  Runs on top of the Phase E
 normal network events (`results/<feeder>/normal_<feeder>_network_events.csv`)
 and the common grid model produced by `simulator.power`.
@@ -30,8 +30,8 @@ Pipeline position:
 | `results.py` | `AttackResult` + `ground_truth()` / `event_rows()` for Task H         |
 | `events.py`  | `AttackEvent` (Phase E schema + `injected`, `command_id`, …) + validation|
 | `physical.py`| optional OpenDSS effect hook: baseline vs overridden solve deltas     |
-| `mitre.py`   | verified MITRE ATT&CK for ICS technique catalog (T0846/T0855/T0836)   |
-| `scenarios/` | `reconnaissance`, `unauthorized_command`, `parameter_modification`    |
+| `mitre.py`   | verified MITRE ATT&CK for ICS technique catalog (T0846/T0855/T0836/T0856/T0803/T0804) |
+| `scenarios/` | `reconnaissance`, `unauthorized_command`, `parameter_modification`, `false_measurement`, `communication_disruption`, `multi_step_attack` |
 
 ## Lifecycle (orchestrated by the engine)
 
@@ -89,14 +89,14 @@ audit, real-data validation) and `Workflow.md` for the implementation record.
 
     python3 -m unittest simulator.attack.test_attack_engine -v
 
-36 tests: MITRE catalog, point/inventory/selection units, event model,
+50 tests: MITRE catalog, point/inventory/selection units, event model,
 engine wiring, fail-closed behaviour, **future-feeder independence**, real-data
 scenario execution on ieee37+ieee123, and (OpenDSS-gated) physical-effect
-assertions.
+assertions.  All six scenarios must execute to SUCCESS on both feeders.
 
 ## Docs
 
 - `README.md` — package quick-guide (this file)
 - `Workflow.md` — implementation workflow / record of the work
-- `AttackScenarios.md` — the three scenarios + command list
+- `AttackScenarios.md` — the six scenarios + command list
 - `simulator/network/NetworkWorkflow.md` — Phase E baseline (+ Phase F/G section)

@@ -4,11 +4,17 @@ Every simulated attack scenario carries a machine-readable reference to the
 official MITRE ATT&CK for ICS taxonomy (``https://attack.mitre.org``).  This
 module is the single source of truth for the techniques the engine knows about.
 
-Technique identifiers below were verified against the official source:
+Technique identifiers below were verified against the official source
+(ATT&CK for ICS, v15.1 -- ``https://attack.mitre.org/versions/v15/techniques``,
+and the CISA technique entries):
 
 * ``T0846`` Remote System Discovery   (Discovery, TA0102)
 * ``T0855`` Unauthorized Command Message (Impair Process Control, TA0106)
 * ``T0836`` Modify Parameter          (Impair Process Control, TA0106)
+* ``T0856`` Spoof Reporting Message   (Evasion, TA0103; also Impair Process
+                                       Control, TA0106)
+* ``T0803`` Block Command Message     (Inhibit Response Function, TA0107)
+* ``T0804`` Block Reporting Message   (Inhibit Response Function, TA0107)
 
 Do **not** invent technique IDs here; only add techniques that exist in the
 published ATT&CK for ICS matrix and record why a simulated behaviour maps to it.
@@ -28,6 +34,8 @@ __all__ = [
 
 TACTIC_DISCOVERY = "Discovery"
 TACTIC_IMPAIR_PROCESS_CONTROL = "Impair Process Control"
+TACTIC_EVASION = "Evasion"
+TACTIC_INHIBIT_RESPONSE_FUNCTION = "Inhibit Response Function"
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,39 @@ TECHNIQUES: Dict[str, MITREMapping] = {
             "the normal operating envelope and records the physical effect."
         ),
     ),
+    "T0856": MITREMapping(
+        technique_id="T0856",
+        technique_name="Spoof Reporting Message",
+        tactic=TACTIC_EVASION,
+        rationale=(
+            "The scenario forges an RTU->SCADA reporting message for a real "
+            "measurement point so the operator observes a value that differs "
+            "from the physical truth while the grid itself is untouched "
+            "(classified under Evasion, TA0103; also usable as Impair "
+            "Process Control, TA0106)."
+        ),
+    ),
+    "T0803": MITREMapping(
+        technique_id="T0803",
+        technique_name="Block Command Message",
+        tactic=TACTIC_INHIBIT_RESPONSE_FUNCTION,
+        rationale=(
+            "The scenario records an adversarial action that prevents a "
+            "command message (SCADA_MASTER -> RTU direction) from reaching "
+            "the field device, inhibiting the operator from controlling it."
+        ),
+    ),
+    "T0804": MITREMapping(
+        technique_id="T0804",
+        technique_name="Block Reporting Message",
+        tactic=TACTIC_INHIBIT_RESPONSE_FUNCTION,
+        rationale=(
+            "The scenario withholds a genuine reporting message (RTU -> "
+            "SCADA_MASTER direction) for a measurement point: the field "
+            "measurement is taken truthfully but never delivered, so the "
+            "operator loses visibility while the grid keeps operating."
+        ),
+    ),
 }
 
 
@@ -116,5 +157,5 @@ MITRE_FIELDS = [f.name for f in _fields(MITREMapping)]
 #: A scenario may attach one or more of these; the one decorated per scenario
 #: in ``scenarios/`` is the primary technique, extras are recorded as related.
 MITRE_ICS: Tuple[MITREMapping, ...] = tuple(
-    TECHNIQUES[key] for key in ("T0846", "T0855", "T0836")
+    TECHNIQUES[key] for key in ("T0846", "T0855", "T0836", "T0856", "T0803", "T0804")
 )
