@@ -2,8 +2,8 @@
 
 *Read this if you want to understand the whole pipeline in one sitting. It's
 written the Feynman way: plain words, small steps, and "why it matters" at each
-stage. The technical report for Phase D lives in `phase_d_report.md`; this file
-is the friendly map.*
+stage. The technical reports live in `phase_d_report.md` and
+`phase_e_f_g_h_i_report.md`; this file is the friendly map.*
 
 ---
 
@@ -18,7 +18,13 @@ grid right now, what voltage does every pole show?"* We do that for every
 half-hour of a week (or a year), and we write the answer down as CSV telemetry.
 
 Why? So later we can run the same thing with **attacks** switched on, compare
-the two, and catch the power-grid fingerprints of a hack.
+the two, and catch the power-grid fingerprints of a hack. But a utility doesn't
+*see* the grid — it sees messages over a network. So between the physics and
+the adversary we add a pretend SCADA conversation: an operator station polls
+the field gear, and every measurement comes back as one numbered message
+(Step 8). Then the adversary shows up (Step 9) and forges or blocks some of
+those messages, or quietly un-tunes a device — every tampered message is
+labelled for the police report.
 
 The whole chain reads left to right:
 
@@ -32,7 +38,12 @@ The whole chain reads left to right:
                  └─ dss_builder.py        build the grid in OpenDSS language
                  └─ normal_scenario.py    bind houses + solve + telemetry
                                            (ieee37 with 25 houses, ieee123 with 85)
-                 └─ (later) attack engine + attacked simulation
+                 │
+                 └─ network/normal.py     the SCADA round-trip (POLL, TELEMETRY)
+                                          -> normal_<feeder>_network_events.csv
+                 │
+                 └─ attack/               six MITRE-ICS adversaries + physical deltas
+                                          (no hardcoded targets; deterministic seed 42)
 
 ---
 
@@ -274,7 +285,136 @@ pessimistic worst case, since these test grids are heavily loaded; see
 
 ---
 
-## 9. Reproduce the Whole Thing, Top to Bottom
+## 9. Step 8 — `simulator/network/normal.py` (the radio chatter)
+
+**What it does.** Two characters appear: `SCADA_MASTER` (the operator's
+brain) and `RTU_<feeder>` (the field radio bolted to the grid). For every
+half-hour slot the master does the same little dance:
+
+1. **POLL** — master → RTU: *"talk to me."* No payload.
+2. **TELEMETRY** — RTU → master: *one message per measurement* — every bus
+   voltage, every element current, and the feeder summary — carrying the exact
+   number the normal run wrote down.
+
+This script reads the telemetry CSVs from Step 7 (never rewrites them), merges
+the three files timestamp-by-timestamp, and turns each row into one of these
+messages with a deterministic identity (`normal_<feeder>-ev<NNNNNNNN>`).
+`protocol="DNP3"` is a label for style — no packets are ever built.
+
+**Why it matters.** This layer is the *trust baseline*: every TELEMETRY value
+is copied verbatim from the physical solution, so network truth equals
+physical truth — quality `GOOD`, delivered, zero latency. Later, the adversary
+(Step 9) presumes exactly this trust. And because event identity is a pure
+function of the physics (not wall-clock or filesystem order), two machines
+that solve the same grid produce the same messages.
+
+Point ids are built the same way for any feeder:
+
+| Point id | Meaning |
+|---|---|
+| `BUS_<bus>_VPU_<AB\|BC\|CA>` | line-to-line voltage at a bus, per unit |
+| `CURRENT_<type>_<element>_<A\|B\|C>` | RMS current into a line/switch at its near end, amps |
+| `FEEDER_SOURCE_P` / `SOURCE_Q` / `VPU_MIN` / `VPU_MAX` / `CONVERGED` | feeder-head power, min/max voltage, solve flag |
+
+**Command:**
+
+```bash
+python3 -m simulator.network.normal --feeder ieee37  --results-dir results/ieee37
+python3 -m simulator.network.normal --feeder ieee123 --results-dir results/ieee123
+```
+
+| Parameter | Meaning |
+|---|---|
+| `--feeder` | which grid (`ieee37` / `ieee123`) |
+| `--results-dir` | where the Step-7 telemetry + manifest live (`results/<feeder>/`) |
+| `--out` | optional output path (default `<results-dir>/normal_<feeder>_network_events.csv`) |
+
+**Output:** `normal_<feeder>_network_events.csv` — 16 fixed, documented columns
+(`event_id, scenario_id, timestamp, feeder_id, src_device, dst_device,
+protocol, message_type, direction, sequence, point_id, value, unit, quality,
+delivery_status, latency_ms`).
+
+**What "good" looks like** (7-day runs: one POLL + its TELEMETRYs per step):
+
+| feeder | events | polls | telemetry (bus / current / summary) |
+|---|---|---|---|
+| ieee37 | 74,592 | 336 | 36,288 / 36,288 / 1,680 |
+| ieee123 | 156,576 | 336 | 67,536 / 87,024 / 1,680 |
+
+Each value equals the telemetry row it came from — e.g. bus 718's `vpu_AB`
+shows up in the messages exactly as the solver wrote it.
+
+---
+
+## 10. Step 9 — `simulator/attack/` (the adversary)
+
+**What it does.** The attack engine runs six scenarios against the *same*
+grid model and the *same* network-event baseline, one scenario at a time.
+Every scenario goes through the same ceremony:
+
+1. **Inventory** — collect what's reachable: every measurement point from the
+   Step-8 CSV plus the controllable devices (switches, capacitors, loads,
+   regulators) in the grid model.
+2. **Preconditions** — if the attack's prerequisites aren't met, stop with a
+   structured `FAILED` report and the reason. Never guess.
+3. **Target discovery** — filter the inventory by what the attack needs
+   (a voltage point, a load coefficient, any switch…) and pick one
+   deterministically with seed 42. **No target is ever hardcoded** — the
+   engine works on any feeder.
+4. **Execute** — do the dirty deed, then measure the physical footprint: the
+   runner rebuilds the real OpenDSS feeder and solves it twice (untampered
+   baseline vs. tampered), reporting honest voltage/power deltas.
+5. **Events** — emit the attack's network messages, labelled with
+   `injected=1` wherever the operator shouldn't trust them.
+
+**Why it matters.** Three design decisions do the work:
+
+- **Feeder-agnostic targeting.** The ieee37 grid has no modelled switches, so
+  `unauthorized_command` falls back to a load; ieee123 has switches, so it
+  picks one. Same code, different physics — no `if feeder == ...` anywhere.
+- **Fail-closed honesty.** No compatible target ⇒ a structured `FAILED` result,
+  and a forged report is never disguised as a genuine device echo.
+  `injected`, `original_value` (physical truth) and `reported_value` (what the
+  operator sees) make each event self-describing.
+- **Traceability.** Attack rows carry the same feeder-scoped `scenario_id`
+  (`<attack>_<feeder>`) as the normal rows, so an analyst can pin each attack
+  message to the exact telemetry it corrupts.
+
+The six scenarios and their MITRE ATT&CK for ICS techniques:
+
+| Scenario (`attack_id`) | MITRE technique | What the adversary does |
+|---|---|---|
+| `reconnaissance` | T0846 Remote System Discovery (Discovery) | probe the RTU; list every point + device (huge message spike — 274 + 641 events) |
+| `unauthorized_command` | T0855 Unauthorized Command Message (Impair Process Control) | flip a device to a forbidden state (open a closed switch) — real physical delta |
+| `parameter_modification` | T0836 Modify Parameter (Impair Process Control) | scale a load's kvar multiplier outside the envelope — real physical delta |
+| `false_measurement` | T0856 Spoof Reporting Message (Evasion) | report `truth × 1.05` — grid untouched, physical deltas honestly zero |
+| `communication_disruption` | T0804 Block Reporting Message (Inhibit Response Function) | take a truthful reading and never deliver it (`delivery_status=DROPPED`) |
+| `multi_step_attack` | T0846 + T0855 + T0836 | one chronological timeline: discover → command → modify |
+
+**Command:**
+
+```bash
+python3 -m simulator.attack --feeder ieee37              # all six scenarios
+python3 -m simulator.attack --feeder ieee123 --attack parameter_modification
+python3 -m simulator.attack --feeder ieee37 --seed 7 --modify-delta 0.50
+```
+
+| Parameter | Meaning |
+|---|---|
+| `--feeder` | which grid to attack (needs its Step-8 CSV) |
+| `--attack` | run one scenario only (default: all six) |
+| `--seed` | deterministic target lottery (default 42) |
+| `--timestamp` | reference timestamp for selection (default `2010-07-01T00:00:00`) |
+| `--modify-delta` | how far `parameter_modification` pushes the coefficient (default 0.35) |
+
+**Output.** Printed reports only — persistence is donated to the next layer
+(Task H bundle: one combined labelled CSV + ground truth + manifest; Task I
+re-certifies it end to end — see `task_h_report.md` and
+`phase_e_f_g_h_i_report.md`). Exit code is non-zero if any scenario FAILED.
+
+---
+
+## 11. Reproduce the Whole Thing, Top to Bottom
 
 ```bash
 # 0. one-time: engine + deps (system Python; venv isn't available in this env)
@@ -299,10 +439,26 @@ python3 -m simulator.power.normal_scenario \
     --feeder ieee123 --assignment grid_data/profile_assignment_85_seed42.csv \
     --start 2010-07-01T00:00:00 --days 7 --out results/ieee123 --verbose
 
-# 4. tests (proves nothing regressed; ~4 min for the end-to-end one)
+# 4. network events (Phase E) — the SCADA round-trip over the telemetry
+python3 -m simulator.network.normal --feeder ieee37  --results-dir results/ieee37
+python3 -m simulator.network.normal --feeder ieee123 --results-dir results/ieee123
+
+# 5. attacks (Phase F/G) — all six MITRE-ICS scenarios; printed reports only
+python3 -m simulator.attack --feeder ieee37
+python3 -m simulator.attack --feeder ieee123
+
+# 6. (optional) combined labelled dataset (Task H) + ground-truth validation (Task I)
+python3 -m simulator.dataset --feeders ieee37,ieee123 \
+    --events-dir results --results-dir results/dataset
+python3 -m simulator.dataset --feeders ieee37,ieee123 \
+    --events-dir results --results-dir results/dataset --validate-ground-truth
+
+# 7. tests (proves nothing regressed; ~4 min for the end-to-end one)
 python3 -m unittest -v simulator.power.test_dss_builder simulator.power.test_normal_scenario
 RUN_E2E=1 python3 -m unittest -v simulator.power.test_e2e_scenario
 python3 -m pytest -q            # 71 existing tests, unchanged
+python3 -m pytest -q simulator/network simulator/attack simulator/dataset simulator/power
+                                # E->H pipeline: 125 passed, 2 skipped
 ```
 
 Heads-up on sizes/time: `ausgrid_profiles_2010_2011.csv` is ~360 MB
@@ -311,7 +467,7 @@ a full-year scenario run takes ~1 hour per feeder, so use `--days 7` to play.
 
 ---
 
-## 10. Why Each Stage Must Exist (significance cheat-sheet)
+## 12. Why Each Stage Must Exist (significance cheat-sheet)
 
 | Script | One-line job | If it vanished |
 |---|---|---|
@@ -322,9 +478,13 @@ a full-year scenario run takes ~1 hour per feeder, so use `--days 7` to play.
 | `profile_assignment.py` | fixed, seeded seating chart | normal vs attack runs would differ for the wrong reason |
 | `dss_builder.py` | speak the solver's language, correctly | wrong voltages (proof: 3 bugs caught here) |
 | `normal_scenario.py` | the honest baseline telemetry | nothing to compare attacks against |
+| `network/normal.py` | turn the telemetry into a SCADA conversation | no trusted message baseline to corrupt |
+| `attack/` engine + scenarios | six MITRE-ICS adversaries, real physical deltas | no cyber fingerprints to detect |
+| `dataset/` + ground truth | one labelled CSV, re-certified end to end | no verifiable attack dataset for research |
 
 The data stages (Steps 1–5) know **nothing** about power grids on purpose —
 a house diary doesn't care which pole it's wired to. The grid stages (Steps 6–7)
-know nothing about Ausgrid. That separation is what lets each half be reused,
-re-tested, and re-run independently, and it's the secret to reproducing the
-whole thing from one command per step.
+know **nothing** about Ausgrid. The network and attack layers (Steps 8–9) know
+**nothing** about either: they only see messages and devices. That separation
+is what lets each half be reused, re-tested, and re-run independently, and it's
+the secret to reproducing the whole thing from one command per step.
