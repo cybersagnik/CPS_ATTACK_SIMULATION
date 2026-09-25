@@ -12,7 +12,8 @@ Quick index of entry points:
 | E | `python -m simulator.network.normal` | normal (attack-free) network-event CSV per feeder |
 | F/G | `python -m simulator.attack` | run the six MITRE-ICS attack scenarios |
 | H | `python -m simulator.dataset` | combined NORMAL+ATTACK dataset (CSV/JSON/manifest, fail-closed) |
-| tests | `python -m pytest -q` | full suite = 103 passed, 2 skipped, 72 subtests |
+| I | `python -m simulator.dataset --validate-ground-truth` | ground-truth validation (MITRE label + `injected` flag, report JSON) |
+| tests | `python -m pytest -q` | full suite = 137 passed, 2 skipped, 72 subtests |
 | docs | files at repo root + `simulator/*/` | per-phase workflow and scenario reference |
 
 ## 1. Environment
@@ -114,6 +115,34 @@ The three extension scenarios export 2 / 2 / 278 events (ieee37) and
 2 / 2 / 645 events (ieee123) for false_measurement / communication_disruption /
 multi_step_attack respectively.
 
+## 4.5 Task I - ground-truth validation (fail-closed, never repairs)
+
+Validates the Task H artifacts already in `--results-dir` against the ground
+truth (label = NORMAL/ATTACK, MITRE label per event + registered technique,
+`injected` ground-truth flag, per-scenario attack windows, multi-step stage
+chronology, AttackResult <-> exported-event cross consistency).  Missing
+combined/ground-truth artifacts are regenerated on demand.  Writes
+`<results-dir>/ground_truth/validation.json`; exit 0 only when every feeder
+PASSes.
+
+```powershell
+python -m simulator.dataset --feeders ieee37,ieee123 --seed 42 --events-dir results --results-dir results/dataset --validate-ground-truth
+```
+
+Verified run (seed 42, real generated data; all 12 scenarios PASS):
+
+```
+PASS ieee37   combined=75152  normal=74592  attack=560
+  reconnaissance=274  unauthorized_command=2  parameter_modification=2
+  false_measurement=2  communication_disruption=2  multi_step_attack=278
+         (multi-step window 2010-07-01T00:00:00..00:00:02, mitre T0846;T0855;T0836)
+PASS ieee123  combined=157870 normal=156576 attack=1294
+  reconnaissance=641  unauthorized_command=2  parameter_modification=2
+  false_measurement=2  communication_disruption=2  multi_step_attack=645
+report: results\dataset\ground_truth\validation.json
+Ground-truth validation: PASS
+```
+
 ## 5. Running the tests
 
 Per-module:
@@ -122,6 +151,7 @@ Per-module:
 python -m unittest simulator.attack.test_attack_engine   -v   # 50 tests (attack scenarios + MITRE catalog + both feeders)
 python -m unittest simulator.network.test_network_events -v   # 17 tests (Phase E)
 python -m unittest simulator.dataset.test_dataset        -v   # 15 tests (Task H: schema + manifest + real CSV/JSON export)
+python -m unittest simulator.dataset.test_ground_truth    -v   # 34 tests (Task I: ground-truth validation, fail-closed)
 python -m unittest simulator.power.test_dss_builder      -v   # DSS model builder
 ```
 
@@ -137,8 +167,8 @@ Full suite (run from repo root; `opendssdirect` present so physical tests execut
 
 ```powershell
 python -m pytest -q
-# expected: 103 passed, 2 skipped, 72 subtests passed
-# (2 skips are the OpenDSS-unavailable guards; stderr "C stack trace" at exit is pre-existing Windows noise)
+# expected: 137 passed, 2 skipped, 72 subtests passed
+# (34 Task I ground-truth tests added; 2 skips are the OpenDSS-unavailable guards; stderr "C stack trace" at exit is pre-existing Windows noise)
 ```
 
 ## 6. Audits & verification

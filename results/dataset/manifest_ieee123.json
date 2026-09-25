@@ -1,0 +1,106 @@
+{
+  "artifact_entries": [
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_communication_disruption_dataset.csv",
+      "sha256": "151410b2959c91193e8a370f9cfea611ce1dbb0c5061bac85e483b19acdd9c33"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_false_measurement_dataset.csv",
+      "sha256": "5c4871853947ef43d2255f9070a40b20724d09a55b71e93da3b1af59017c248c"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_multi_step_attack_dataset.csv",
+      "sha256": "2e9d4c98f4716ee929646d6b533bb7c7e35b7cdf86a733d9c5d01a42be0c8d0b"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_parameter_modification_dataset.csv",
+      "sha256": "8868a263bb796da15c0518ae9c77f310df92776a9e91f51e50848fa9467d127d"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_reconnaissance_dataset.csv",
+      "sha256": "ea31cd5813eca158a24a8f4015e711c44d919c53197c133d2eafb66886c97a64"
+    },
+    {
+      "kind": "attack",
+      "path": "attack_ieee123_unauthorized_command_dataset.csv",
+      "sha256": "f799ffa0705e783381fa2c2da5313a01e0c2ad626d53dca270c604f18d80bb50"
+    },
+    {
+      "kind": "combined",
+      "path": "combined_ieee123_dataset.csv",
+      "sha256": "014f5e3d3c4724b0ddeed09f878c83289200c64ee1abb4933a3c26d7234bbade"
+    },
+    {
+      "kind": "ground_truth",
+      "path": "ground_truth_ieee123.json",
+      "sha256": "d225870ce005a5f4df1c16a9ea5a67600dea70c967f5e31ff1d00a9e71ac4ecc"
+    }
+  ],
+  "attack_rows": 0,
+  "combined_rows": 0,
+  "determinism_digest": "014f5e3d3c4724b0ddeed09f878c83289200c64ee1abb4933a3c26d7234bbade",
+  "failed_scenarios": {},
+  "feeder_id": "ieee123",
+  "generated_at_utc": "2026-09-25T01:02:37.094407+00:00",
+  "normal_rows": 0,
+  "scenarios": [
+    {
+      "attack_id": "communication_disruption",
+      "event_count": 2,
+      "feeder_id": "ieee123",
+      "mitre_technique": "T0804",
+      "output": "attack_ieee123_communication_disruption_dataset.csv",
+      "status": "success"
+    },
+    {
+      "attack_id": "false_measurement",
+      "event_count": 2,
+      "feeder_id": "ieee123",
+      "mitre_technique": "T0856",
+      "output": "attack_ieee123_false_measurement_dataset.csv",
+      "status": "success"
+    },
+    {
+      "attack_id": "multi_step_attack",
+      "event_count": 645,
+      "feeder_id": "ieee123",
+      "mitre_technique": "T0846",
+      "output": "attack_ieee123_multi_step_attack_dataset.csv",
+      "status": "success"
+    },
+    {
+      "attack_id": "parameter_modification",
+      "event_count": 2,
+      "feeder_id": "ieee123",
+      "mitre_technique": "T0836",
+      "output": "attack_ieee123_parameter_modification_dataset.csv",
+      "status": "success"
+    },
+    {
+      "attack_id": "reconnaissance",
+      "event_count": 641,
+      "feeder_id": "ieee123",
+      "mitre_technique": "T0846",
+      "output": "attack_ieee123_reconnaissance_dataset.csv",
+      "status": "success"
+    },
+    {
+      "attack_id": "unauthorized_command",
+      "event_count": 2,
+      "feeder_id": "ieee123",
+      "mitre_technique": "T0855",
+      "output": "attack_ieee123_unauthorized_command_dataset.csv",
+      "status": "success"
+    }
+  ],
+  "schema_version": "1.0",
+  "seed": 42,
+  "source_normal_path": "",
+  "source_normal_sha256": "",
+  "successful_scenarios": 0
+}

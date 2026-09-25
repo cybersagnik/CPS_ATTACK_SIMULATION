@@ -1,0 +1,3 @@
+event_id,scenario_id,timestamp,feeder_id,src_device,dst_device,protocol,message_type,direction,sequence,point_id,value,unit,quality,delivery_status,latency_ms,injected,replay_of_event_id,original_value,reported_value,command_id,result,label,attack_id,mitre_technique
+false_measurement_ieee37-atk001,false_measurement_ieee37,2010-07-01T00:00:00,ieee37,SCADA_MASTER,RTU_ieee37,DNP3,QUERY,SCADA_TO_RTU,1,,,,GOOD,DELIVERED,0,1,,,,READ-ieee37-BUS_718_VPU_AB,READ,ATTACK,false_measurement,T0856
+false_measurement_ieee37-atk002,false_measurement_ieee37,2010-07-01T00:00:00,ieee37,RTU_ieee37,SCADA_MASTER,DNP3,REPORT,RTU_TO_SCADA,2,BUS_718_VPU_AB,0.941522,pu,GOOD,DELIVERED,0,1,,0.8966879538876935,0.941522,READ-ieee37-BUS_718_VPU_AB,SPOOFED,ATTACK,false_measurement,T0856
